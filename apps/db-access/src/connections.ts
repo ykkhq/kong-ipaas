@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import pg from 'pg';
 
 /**
- * Connection pools keyed by a hash of the connection string. db-access holds no
- * credentials of its own: the string arrives per request, resolved by the Kong
- * data plane from the Konnect vault. Strings are never logged.
+ * Connection pools keyed by a hash of the connection string (resolved from
+ * Vault, or sent directly when testing an unsaved string). Strings are never
+ * logged. A rotated string gets a new pool; the old one ages out.
  */
 export class Pools {
   private pools = new Map<string, { pool: pg.Pool; lastUsed: number }>();
@@ -31,6 +31,15 @@ export class Pools {
     pool.on('error', (e) => console.error(`pool ${key.slice(0, 8)}: ${e.message}`));
     this.pools.set(key, { pool, lastUsed: Date.now() });
     return pool;
+  }
+
+  /** Closes the pool for a string (e.g. after its credentials were rotated away). */
+  drop(connectionString: string): void {
+    const key = createHash('sha256').update(connectionString).digest('hex');
+    const hit = this.pools.get(key);
+    if (!hit) return;
+    this.pools.delete(key);
+    hit.pool.end().catch(() => undefined);
   }
 
   get size(): number {

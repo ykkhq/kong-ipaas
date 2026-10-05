@@ -22,7 +22,7 @@ export function ConnectionsPage() {
     setError(null);
     try {
       const r = await api.testConnection(c.name);
-      setFlash(r.ok ? `${c.name}: connected through the vault in ${r.durationMs} ms` : null);
+      setFlash(r.ok ? `${c.name}: connected via Vault in ${r.durationMs} ms` : null);
       if (!r.ok) setError(`${c.name}: ${r.error}`);
     } catch (e) {
       setError((e as Error).message);
@@ -33,7 +33,7 @@ export function ConnectionsPage() {
   };
 
   const remove = async (c: DbConnection) => {
-    if (!confirm(`Delete connection "${c.name}"? Its connection string is removed from the Konnect vault.`)) return;
+    if (!confirm(`Delete connection "${c.name}"? Its connection string is removed from Vault.`)) return;
     try {
       await api.deleteConnection(c.name);
       refresh();
@@ -55,8 +55,8 @@ export function ConnectionsPage() {
           <div>
             <h1>Database connections</h1>
             <p className="muted">
-              Connection strings are stored in a Konnect Config Store and read by the data plane through the vault at request time.
-              Rotating one updates every flow that uses it, with no redeploy (allow about 10 seconds).
+              Connection strings are stored in the local Vault. Flows refer to a connection by name, and db-access reads the string
+              from Vault with a read-only token. Rotating one applies to the next query of every flow that uses it, with no redeploy.
             </p>
           </div>
           <button className="primary" onClick={() => setMode({ kind: 'new' })}>New connection</button>
@@ -71,7 +71,7 @@ export function ConnectionsPage() {
               onCancel={() => setMode(null)}
               onSaved={(c) => {
                 setMode(null);
-                setFlash(`${c.name} saved to the vault`);
+                setFlash(`${c.name} saved to Vault`);
                 refresh();
               }}
             />
@@ -82,14 +82,17 @@ export function ConnectionsPage() {
         ) : (
           <table className="flows">
             <thead>
-              <tr><th>Name</th><th>Database</th><th>Vault reference</th><th>Used by</th><th>Last test</th><th /></tr>
+              <tr><th>Name</th><th>Database</th><th>Vault path</th><th>Used by</th><th>Last test</th><th /></tr>
             </thead>
             <tbody>
               {conns.map((c) => (
                 <tr key={c.name}>
                   <td><b>{c.name}</b>{c.description && <div className="muted small">{c.description}</div>}</td>
                   <td><code>{c.username}@{c.host}:{c.port}/{c.database}</code></td>
-                  <td><code>{'{vault://ipaasdb/'}{c.name}{'}'}</code></td>
+                  <td>
+                    <code>ipaas/db/{c.name}</code>
+                    {!c.in_vault && <div><span className="badge error" title="Metadata exists but Vault has no value: rotate to set it">missing in Vault</span></div>}
+                  </td>
                   <td className="small">{c.used_by.length ? c.used_by.map((f) => <a key={f.id} href={`#/flows/${f.id}`} className="chip">{f.name}</a>) : <span className="muted">-</span>}</td>
                   <td className="small">
                     {c.test_ok == null ? <span className="muted">never</span> : c.test_ok

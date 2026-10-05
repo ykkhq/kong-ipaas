@@ -129,10 +129,9 @@ exports[`compileFlow > compiles the seeded examples > customer-db 1`] = `
     },
     {
       "inputs": {
-        "c": "vault.db_sample",
         "p": "FIND_CUSTOMER__PARAMS",
       },
-      "jq": "{connection: "sample", connectionString: .c, sql: "SELECT id, name, email, city, tier\\nFROM customers\\nWHERE id = :id", params: .p}",
+      "jq": "{connection: "sample", sql: "SELECT id, name, email, city, tier\\nFROM customers\\nWHERE id = :id", params: .p}",
       "name": "FIND_CUSTOMER__REQ",
       "type": "jq",
     },
@@ -201,10 +200,9 @@ exports[`compileFlow > compiles the seeded examples > customer-db 1`] = `
     },
     {
       "inputs": {
-        "c": "vault.db_sample",
         "p": "CUSTOMER_ORDERS__PARAMS",
       },
-      "jq": "{connection: "sample", connectionString: .c, sql: "SELECT o.id, o.status, o.created_at,\\n       sum(p.price * i.qty)::float AS total,\\n       count(*)::int AS items\\nFROM orders o\\nJOIN order_items i ON i.order_id = o.id\\nJOIN products p ON p.sku = i.sku\\nWHERE o.customer_id = :id\\nGROUP BY o.id\\nORDER BY o.created_at DESC", params: .p}",
+      "jq": "{connection: "sample", sql: "SELECT o.id, o.status, o.created_at,\\n       sum(p.price * i.qty)::float AS total,\\n       count(*)::int AS items\\nFROM orders o\\nJOIN order_items i ON i.order_id = o.id\\nJOIN products p ON p.sku = i.sku\\nWHERE o.customer_id = :id\\nGROUP BY o.id\\nORDER BY o.created_at DESC", params: .p}",
       "name": "CUSTOMER_ORDERS__REQ",
       "type": "jq",
     },
@@ -315,11 +313,6 @@ exports[`compileFlow > compiles the seeded examples > customer-db 1`] = `
       "type": "exit",
     },
   ],
-  "resources": {
-    "vault": {
-      "db_sample": "{vault://ipaasdb/sample}",
-    },
-  },
 }
 `;
 

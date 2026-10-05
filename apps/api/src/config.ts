@@ -32,9 +32,11 @@ export const config = {
     url: env.DB_ACCESS_URL ?? 'http://db-access:4020',
     network: env.DB_ACCESS_NETWORK || undefined,
   },
-  connections: {
-    /** Konnect Config Store holding connection strings, exposed as vault {vault://<prefix>/<name>}. */
-    storeName: env.DB_CONFIG_STORE ?? 'ipaas-db-connections',
-    vaultPrefix: env.DB_VAULT_PREFIX ?? 'ipaasdb',
+  vault: {
+    addr: env.VAULT_ADDR ?? 'http://vault:8200',
+    mount: env.VAULT_KV_MOUNT ?? 'ipaas',
+    /** Written by the Vault bootstrap into the vault-tokens volume. */
+    apiTokenFile: env.VAULT_API_TOKEN_FILE ?? '/vault/tokens/api-token',
+    dbAccessTokenFile: env.VAULT_DB_ACCESS_TOKEN_FILE ?? '/vault/tokens/db-access-token',
   },
 };

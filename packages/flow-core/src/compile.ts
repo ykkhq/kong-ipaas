@@ -27,15 +27,10 @@ export interface CompileResult {
 export interface CompileOptions {
   /** Base URL of the db-access service as seen from the data plane. */
   dbAccessUrl?: string;
-  /** Prefix of the Konnect vault holding database connection strings. */
-  dbVaultPrefix?: string;
 }
 
 export const DEFAULT_DB_ACCESS_URL = 'http://db-access:4020';
-export const DEFAULT_DB_VAULT_PREFIX = 'ipaasdb';
 
-/** Vault reference of a stored connection string (key = connection name). */
-export const connectionVaultRef = (name: string, prefix = DEFAULT_DB_VAULT_PREFIX) => `{vault://${prefix}/${name}}`;
 
 /** A data input of a node: the alias it gets in jq, and the DataKit references feeding it. */
 interface DataInput { alias: string; edge: FlowEdge; source: FlowNode }
@@ -49,7 +44,6 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
   const failPaths: Record<string, string[]> = {};
   const fail = (): CompileResult => ({ ok: false, errors, nodeMap, failPaths });
   const dbAccessUrl = (opts.dbAccessUrl ?? DEFAULT_DB_ACCESS_URL).replace(/\/+$/, '');
-  const dbVaultPrefix = opts.dbVaultPrefix ?? DEFAULT_DB_VAULT_PREFIX;
   const { nodes, edges } = flow.graph;
 
   if (!SLUG_RE.test(flow.slug)) errors.push({ message: `Invalid slug "${flow.slug}" (use lowercase letters, digits and dashes)` });
@@ -246,10 +240,9 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
   }
 
   /**
-   * PARAMS (jq over inputs) -> REQ (+ connection string from the vault) ->
-   * CALL (POST db-access /query) -> OK -> GATE.
-   * The connection string is resolved by the data plane from the Konnect vault;
-   * the plugin config only holds the {vault://…} reference, and user jq never sees it.
+   * PARAMS (jq over inputs) -> REQ -> CALL (POST db-access /query) -> OK -> GATE.
+   * Only the connection name travels through Kong; db-access resolves the
+   * connection string from the local Vault.
    * db-access answers 200 with {ok:false,...} on errors. The gate runs the result
    * node on success, or the error exit, which ends the flow with the database
    * message. (A DataKit node may belong to one branch only, so the gate owns just
@@ -259,8 +252,6 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
     const d: DatabaseData = n.data;
     const { inputs, wrap } = jqInputs(ins);
     const params = Object.entries(d.params ?? {}).map(([k, v]) => `${JSON.stringify(k)}: (${v.trim()})`).join(', ');
-    const vaultEntry = `db_${d.connection}`;
-    vault[vaultEntry] = connectionVaultRef(d.connection, dbVaultPrefix);
     const paramsNode = helper(n, 'PARAMS');
     const req = helper(n, 'REQ');
     const call = helper(n, 'CALL');
@@ -274,8 +265,8 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
     return [
       { name: paramsNode, type: 'jq', inputs, jq: wrap(`{${params}}`) },
       {
-        name: req, type: 'jq', inputs: { p: paramsNode, c: `vault.${vaultEntry}` },
-        jq: `{connection: ${JSON.stringify(d.connection)}, connectionString: .c, sql: ${JSON.stringify(d.sql)}, params: .p}`,
+        name: req, type: 'jq', inputs: { p: paramsNode },
+        jq: `{connection: ${JSON.stringify(d.connection)}, sql: ${JSON.stringify(d.sql)}, params: .p}`,
       },
       // Fail fast if db-access itself is unreachable (its statement timeout is 10s).
       { name: call, type: 'call', method: 'POST', url: `${dbAccessUrl}/query`, timeout: 15000, inputs: { body: req } },

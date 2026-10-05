@@ -11,6 +11,7 @@ Browser ─► web :3000 (React Flow) ─/api─► api (Fastify) ─► postgre
 Client ──► kong-dp :8000 /flows/<slug> ◄────────────────┘
               └─ DataKit DAG ─► mocks:4010 / any API
                             └─► db-access:4020 ─► sample-db (Postgres 16) / your databases
+                                   └─ reads connection strings from vault:8200 (read-only token)
 ```
 
 | Container | Role |
@@ -20,7 +21,8 @@ Client ──► kong-dp :8000 /flows/<slug> ◄──────────�
 | `api` | Flow CRUD, flow → DataKit compiler, Konnect deployer, test runner with trace. |
 | `web` | Flow designer UI, served by nginx, which also proxies `/api`. |
 | `postgres` | Stores flows. |
-| `db-access` | SQL executor for Database nodes (`POST /query`). It holds no credentials: the data plane passes the connection string, resolved from the Konnect vault. It isn't started by compose: the API starts the `ipaas-db-access` container once a flow contains a Database node and keeps it running. The `db-access-image` compose service only builds its image. |
+| `db-access` | SQL executor for Database nodes (`POST /query`). It resolves connection names from Vault with a read-only token. It isn't started by compose: the API starts the `ipaas-db-access` container once a flow contains a Database node and keeps it running. The `db-access-image` compose service only builds its image. |
+| `vault` | Local HashiCorp Vault holding database connection strings. It initializes and unseals itself. |
 | `sample-db` | Stub Postgres 16 with `customers`, `orders`, `order_items` and `products` (connection `sample`). |
 | `mocks` | Sample job APIs (`/users/:id`, `/users/:id/orders`, `/weather`, `/loyalty/:tier`, `/inventory` (XML), `/echo`). |
 
@@ -68,16 +70,28 @@ curl 'http://localhost:8000/flows/customer-360?id=1'
 ### Database nodes and connections
 
 - **Connections are managed in the UI** (**Connections** page, or **+ New connection…** in the Database node's connection picker).
-  - A connection string is tested first, then written to a **Konnect Config Store** (`ipaas-db-connections`). That store is exposed to the data plane as the vault prefix `ipaasdb`.
-  - Konnect never returns secret values. Locally the app keeps only the non-secret details (host, port, database, user) for display.
-- **Reuse by name.** A Database node picks an existing connection. The flow's DataKit config contains only `{vault://ipaasdb/<name>}`, which the data plane resolves on each request and passes to db-access. db-access holds no credentials.
-- **Rotation.** Use **Rotate** on the Connections page. Every flow using that connection picks up the new string within about 10 to 15 s, with no redeploy. A connection that flows still use can't be deleted.
-- **Seeding.** `DB_CONN_<NAME>=postgres://…` env vars are written to the vault once on first start, and existing names are never overwritten. `sample` (the stub DB) is seeded this way.
-- **Variables.** Write `:id` in the SQL and set `id` to a jq expression such as `.req.query.id`. Values are always bound as query parameters (`$1`, `$2`, …), never interpolated into the SQL. User jq never sees the connection string.
-- **Errors.** Any failure stops the flow and returns the node's error status (default `502`) with the database message. Examples: a SQL error, a bad parameter, a missing variable, a missing vault entry, wrong credentials, or the database being unreachable. A typical body is `{"error":"database query failed","node":"Find Customer","message":"…","code":"22P02"}`. If db-access itself is unreachable, the call times out after 15 s with a DataKit `node execution error`.
+  - A connection string is tested first, then written to the **local Vault** at `ipaas/db/<name>` (KV v2).
+  - Postgres keeps only the non-secret details (host, port, database, user) for listing.
+- **Reuse by name.** A Database node picks an existing connection, and the flow's DataKit config contains only the connection name. db-access reads the string from Vault with a **read-only token** and caches it for up to 60 s. Neither Kong nor Konnect ever sees a connection string.
+- **Rotation.** Use **Rotate** on the Connections page. The API tells db-access to drop its cached copy, so the next query of every flow uses the new string, with no redeploy. A connection that flows still use can't be deleted.
+- **Seeding.** `DB_CONN_<NAME>=postgres://…` env vars are written to Vault on start when the name isn't there yet. `sample` (the stub DB) is seeded this way.
+- **Variables.** Write `:id` in the SQL and set `id` to a jq expression such as `.req.query.id`. Values are always bound as query parameters (`$1`, `$2`, …), never interpolated into the SQL.
+- **Errors.** Any failure stops the flow and returns the node's error status (default `502`) with the message. Examples: a SQL error, a bad parameter, a missing variable, an unknown connection, wrong credentials, the database being unreachable, or Vault being unavailable. A typical body is `{"error":"database query failed","node":"Find Customer","message":"…","code":"22P02"}`. If db-access itself is unreachable, the call times out after 15 s with a DataKit `node execution error`.
 - **Limits.** Statement timeout is 10 s (`STATEMENT_TIMEOUT_MS`), and a query returns at most 1000 rows (`MAX_ROWS`, flagged as `truncated`).
-- **Run query** in the inspector and **Test** on the Connections page go through an internal gateway route, `POST /_ipaas/db-query`. That route resolves the vault the same way flows do and requires a random token, which is also stored in the vault; without it the route returns `403`.
-- **Lifecycle.** Opening, saving or deploying a flow with a Database node starts `ipaas-db-access`. It is recreated when its image is rebuilt, re-ensured when the API starts, and removed when the API stops, so `docker compose down` stays clean. The API mounts `/var/run/docker.sock` for this.
+- **Run query** in the inspector and **Test** on the Connections page call db-access directly, which resolves the connection from Vault exactly as flows do.
+- **db-access lifecycle.** Opening, saving or deploying a flow with a Database node starts `ipaas-db-access`. It is recreated when its image or settings change, re-ensured when the API starts, and removed when the API stops, so `docker compose down` stays clean. The API mounts `/var/run/docker.sock` for this.
+
+### Local Vault
+
+- **Startup.** `vault` runs HashiCorp Vault with file storage and initializes and unseals itself on every start (`infra/vault/entrypoint.sh`).
+  - First start: one unseal key, the KV v2 engine at `ipaas/`, and the policies `ipaas-api` (read/write `db/*`) and `ipaas-db-access` (read `db/*`).
+  - It also creates periodic service tokens, which the services renew.
+- **Volumes.**
+  - `vault-keys` holds the unseal key and root token. Only the vault container mounts it.
+  - `vault-tokens` holds the two service tokens. The API mounts it read-only and passes the read-only token to db-access.
+- **Security note.** Anyone with access to the `vault-keys` volume can read every secret. That's fine for local use, but it is not a production setup.
+- **Inspecting secrets.** The Vault UI is at http://localhost:8200. For a root login, get the token with `docker compose exec vault cat /vault/keys/root-token`.
+- **Upgrading from `v0.2.0`**, which used the Konnect Config Store: on start the API removes the old Konnect vault, config store and system route, then redeploys live database flows. Re-create any connections other than the seeded ones in the UI, because Konnect secrets can't be read back.
 
 Each deployed flow becomes three Konnect entities tagged `ipaas` and `flow-<id>`: a Service `ipaas-<slug>`, a Route and a `datakit` plugin. Their ids are deterministic (UUIDv5 of the flow id), so redeploys upsert in place.
 
@@ -94,8 +108,9 @@ Each deployed flow becomes three Konnect entities tagged `ipaas` and `flow-<id>`
 | `GATEWAY_PORT`, `WEB_PORT`, `MOCKS_PORT`, … | `8000`, `3000`, `4010` | Host ports |
 | `KONG_VERSION` | `3.16` | Data plane image tag |
 | `MOCK_DELAY_MS` | `300` | Latency added by the mocks so parallelism is visible |
-| `DB_CONN_<NAME>` | `DB_CONN_SAMPLE` → stub DB | Connections seeded into the Konnect vault on first start (then managed in the UI) |
-| `DB_CONFIG_STORE`, `DB_VAULT_PREFIX` | `ipaas-db-connections`, `ipaasdb` | Konnect Config Store and vault prefix for connection strings |
+| `DB_CONN_<NAME>` | `DB_CONN_SAMPLE` → stub DB | Connections seeded into Vault when missing (then managed in the UI) |
+| `VAULT_PORT`, `VAULT_VERSION` | `8200`, `1.20` | Vault UI/API host port and image tag |
+| `VAULT_CACHE_TTL_MS` | `60000` | How long db-access caches a connection string (rotation invalidates it immediately) |
 | `SAMPLE_DB_PORT` | `5433` | Host port of the stub Postgres |
 
 ## Development
@@ -115,4 +130,5 @@ Layout: `packages/flow-core` (schema, compiler, trace parser, shared with the UI
 - **`konnect-init` exits with 401.** The token in `~/.kong/kpat` is invalid or expired, or `KONNECT_REGION` is wrong.
 - **The Deploy banner says "data plane has not confirmed".** Konnect accepted the config, but `kong-dp` hasn't synced yet. Check `docker compose logs kong-dp` and the data plane nodes page in Konnect.
 - **The Database node says "db-access: Image … not found".** Run `docker compose build db-access-image`, or `docker compose up --build`.
-- **Reset everything:** `docker compose down -v`. This drops flows and the DP certificate. The pinned certificate stays in Konnect until you remove it.
+- **Database nodes fail with "Vault unavailable".** Check `docker compose logs vault`. Vault unseals itself on start, and if `vault-keys` was deleted while `vault-file` was kept, remove both volumes.
+- **Reset everything:** `docker compose down -v`. This drops flows, Vault secrets and the DP certificate. The pinned certificate stays in Konnect until you remove it.

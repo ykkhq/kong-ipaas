@@ -40,7 +40,7 @@ export interface PlatformStatus {
   gatewayUrl: string;
 }
 
-/** Connection metadata; the connection string itself is only in the Konnect vault. */
+/** Connection metadata; the connection string itself is only in Vault. */
 export interface DbConnection {
   name: string;
   description: string;
@@ -53,6 +53,7 @@ export interface DbConnection {
   tested_at: string | null;
   test_ok: boolean | null;
   test_error: string | null;
+  in_vault: boolean;
   used_by: { id: string; name: string }[];
 }
 

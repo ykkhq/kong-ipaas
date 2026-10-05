@@ -95,12 +95,11 @@ describe('compileFlow', () => {
     ), { dbAccessUrl: 'http://db:1/' });
     expect(r.errors).toEqual([]);
     expect(byName(r, 'USERS__PARAMS')!.jq).toContain('({"id": (.req.query.id)})');
-    expect(byName(r, 'USERS__PARAMS')!.inputs).not.toHaveProperty('c');
     expect(byName(r, 'USERS__REQ')).toEqual({
-      name: 'USERS__REQ', type: 'jq', inputs: { p: 'USERS__PARAMS', c: 'vault.db_sample' },
-      jq: '{connection: "sample", connectionString: .c, sql: "SELECT * FROM users WHERE id = :id", params: .p}',
+      name: 'USERS__REQ', type: 'jq', inputs: { p: 'USERS__PARAMS' },
+      jq: '{connection: "sample", sql: "SELECT * FROM users WHERE id = :id", params: .p}',
     });
-    expect(r.config!.resources).toEqual({ vault: { db_sample: '{vault://ipaasdb/sample}' } });
+    expect(r.config!.resources).toBeUndefined();
     expect(byName(r, 'USERS__CALL')).toEqual({ name: 'USERS__CALL', type: 'call', method: 'POST', url: 'http://db:1/query', timeout: 15000, inputs: { body: 'USERS__REQ' } });
     expect(byName(r, 'USERS__GATE')).toEqual({
       name: 'USERS__GATE', type: 'branch', input: 'USERS__OK', then: ['USERS'], else: ['USERS__ERR_BODY', 'USERS__ERR'],

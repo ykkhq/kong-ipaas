@@ -29,7 +29,7 @@ export class Deployer {
   ) {}
 
   compile(row: Pick<FlowRow, 'name' | 'slug' | 'debug' | 'graph'>): CompileResult {
-    return compileRow(row, { dbAccessUrl: this.dbAccess?.url, dbVaultPrefix: this.connections?.vaultPrefix });
+    return compileRow(row, { dbAccessUrl: this.dbAccess?.url });
   }
 
   /** Pushes service + route + DataKit plugin to Konnect, then waits for the DP to pick it up. */
@@ -47,7 +47,6 @@ export class Deployer {
         if (this.connections) {
           const missing = await this.connections.missingFor(row.graph);
           if (missing.length) throw new Error(`Unknown database connection(s): ${missing.join(', ')}. Create them under Connections first.`);
-          await this.connections.setup();
         }
         const s = await this.dbAccess.ensure();
         if (s.state !== 'running') throw new Error(`db-access is not running: ${s.error}`);

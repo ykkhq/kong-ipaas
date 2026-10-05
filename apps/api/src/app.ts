@@ -163,7 +163,7 @@ export function buildApp(deps: Deps): FastifyInstance {
   // ---- database access ------------------------------------------------------
   app.get('/api/db/status', async () => dbAccess.status());
 
-  /** Runs SQL with a stored connection (via the gateway, which resolves the vault), for the inspector's "Run query". */
+  /** Runs SQL with a stored connection (db-access resolves it from Vault), for the inspector's "Run query". */
   app.post<{ Body: { connection: string; sql: string; params?: Record<string, unknown>; maxRows?: number } }>('/api/db/query', async (req, reply) => {
     try {
       return await connections.query(req.body);
@@ -173,7 +173,7 @@ export function buildApp(deps: Deps): FastifyInstance {
     }
   });
 
-  // ---- connections (strings stored in the Konnect vault) ------------------------
+  // ---- connections (strings stored in the local Vault) ---------------------------
   const connBody = {
     type: 'object',
     properties: {
@@ -192,7 +192,7 @@ export function buildApp(deps: Deps): FastifyInstance {
     return connections.save(req.body, 'create');
   });
 
-  /** Rotates the stored string (flows pick it up without redeploy) and/or edits the description. */
+  /** Rotates the stored string (applies to the next query of every flow) and/or edits the description. */
   app.put<{ Params: { name: string }; Body: ConnBody }>('/api/connections/:name', { schema: { body: connBody } }, async (req) =>
     connections.save({ ...req.body, name: req.params.name }, 'update'));
 
@@ -205,7 +205,7 @@ export function buildApp(deps: Deps): FastifyInstance {
   app.post<{ Body: { connectionString: string } }>('/api/connections/test', { schema: { body: { type: 'object', required: ['connectionString'], properties: { connectionString: { type: 'string' } } } } }, async (req) =>
     connections.testString(req.body.connectionString));
 
-  /** Tests a stored connection end to end through the vault. */
+  /** Tests a stored connection the way flows use it (resolved from Vault by db-access). */
   app.post<{ Params: { name: string } }>('/api/connections/:name/test', async (req) => connections.testStored(req.params.name));
 
   /** Recreates the bundled example flows that are missing (by slug). */

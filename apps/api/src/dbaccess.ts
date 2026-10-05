@@ -11,8 +11,8 @@ export interface DbAccessOptions {
   alias: string;
   /** Docker network to attach to; defaults to the API container's own network. */
   network?: string;
-  /** Extra env for the container (tuning only; it holds no credentials). */
-  env: Record<string, string>;
+  /** Env for the container, computed at start (Vault address + read-only token, tuning). */
+  env: () => Record<string, string>;
 }
 
 export interface DbAccessStatus {
@@ -56,16 +56,17 @@ export class DbAccessManager {
     const img = await this.docker.inspectImage(image);
     if (!img) throw new Error(`Image ${image} not found; run "docker compose build" first`);
 
+    const env = Object.entries(this.opts.env()).map(([k, v]) => `${k}=${v}`);
     let c = await this.docker.inspectContainer(containerName);
-    if (c && c.Image !== img.Id) {
-      // Image was rebuilt: replace the container so the new code runs.
+    const envChanged = c && env.some((e) => !(c.Config?.Env ?? []).includes(e));
+    if (c && (c.Image !== img.Id || envChanged)) {
+      // Image rebuilt or settings (e.g. Vault token) changed: replace the container.
       await this.docker.request('DELETE', `/containers/${c.Id}?force=true`);
       c = null;
     }
     if (!c) {
       this.last = { state: 'starting', image };
       const network = this.opts.network ?? (await this.ownNetwork());
-      const env = Object.entries(this.opts.env).map(([k, v]) => `${k}=${v}`);
       c = await this.docker.request('POST', `/containers/create?name=${encodeURIComponent(containerName)}`, {
         Image: image,
         Env: env,
@@ -124,9 +125,17 @@ export class DbAccessManager {
   }
 }
 
-/** db-access tuning vars from the API's env. Connection strings are never passed: they come from the vault per request. */
-export function dbAccessEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+/**
+ * Env for db-access: tuning vars plus the Vault address and its read-only token.
+ * Connection strings are never passed; db-access reads them from Vault by name.
+ */
+export function dbAccessEnv(env: NodeJS.ProcessEnv = process.env, vault?: { addr: string; mount: string; token?: string }): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const k of ['STATEMENT_TIMEOUT_MS', 'MAX_ROWS', 'MAX_POOLS']) if (env[k] !== undefined) out[k] = env[k]!;
+  for (const k of ['STATEMENT_TIMEOUT_MS', 'MAX_ROWS', 'MAX_POOLS', 'VAULT_CACHE_TTL_MS']) if (env[k] !== undefined) out[k] = env[k]!;
+  if (vault) {
+    out.VAULT_ADDR = vault.addr;
+    out.VAULT_KV_MOUNT = vault.mount;
+    if (vault.token) out.VAULT_TOKEN = vault.token;
+  }
   return out;
 }

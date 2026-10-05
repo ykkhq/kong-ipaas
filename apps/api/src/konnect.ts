@@ -62,38 +62,29 @@ export class Konnect {
     }
   }
 
-  // ---- Config Store (backs the "konnect" vault) -------------------------------
+  /** Deletes an entity; returns false if it did not exist. */
+  async removeIfExists(entity: Entity, id: string): Promise<boolean> {
+    try {
+      await this.request('DELETE', `/control-planes/${await this.cpId()}/core-entities/${entity}/${id}`);
+      return true;
+    } catch (e) {
+      if (e instanceof KonnectError && e.status === 404) return false;
+      throw e;
+    }
+  }
 
-  async findOrCreateConfigStore(name: string): Promise<string> {
+  /** Deletes a Config Store and its secrets by name; returns false if absent. */
+  async deleteConfigStoreByName(name: string): Promise<boolean> {
     const cp = await this.cpId();
     const list = await this.request<{ data: { id: string; name: string }[] }>('GET', `/control-planes/${cp}/config-stores`);
     const hit = list.data?.find((c) => c.name === name);
-    if (hit) return hit.id;
-    return (await this.request<{ id: string }>('POST', `/control-planes/${cp}/config-stores`, { name })).id;
-  }
-
-  /** Secrets are write-only: Konnect never returns the value. */
-  async putSecret(storeId: string, key: string, value: string): Promise<void> {
-    const base = `/control-planes/${await this.cpId()}/config-stores/${storeId}/secrets`;
-    try {
-      await this.request('PUT', `${base}/${encodeURIComponent(key)}`, { value });
-    } catch (e) {
-      if (!(e instanceof KonnectError && e.status === 404)) throw e;
-      await this.request('POST', base, { key, value });
-    }
-  }
-
-  async deleteSecret(storeId: string, key: string): Promise<void> {
-    try {
-      await this.request('DELETE', `/control-planes/${await this.cpId()}/config-stores/${storeId}/secrets/${encodeURIComponent(key)}`);
-    } catch (e) {
-      if (!(e instanceof KonnectError && e.status === 404)) throw e;
-    }
-  }
-
-  async listSecretKeys(storeId: string): Promise<string[]> {
-    const r = await this.request<{ data: { key: string }[] }>('GET', `/control-planes/${await this.cpId()}/config-stores/${storeId}/secrets`);
-    return (r.data ?? []).map((s) => s.key);
+    if (!hit) return false;
+    // A store can only be deleted once it is empty.
+    const base = `/control-planes/${cp}/config-stores/${hit.id}`;
+    const secrets = await this.request<{ data: { key: string }[] }>('GET', `${base}/secrets`);
+    for (const { key } of secrets.data ?? []) await this.request('DELETE', `${base}/secrets/${encodeURIComponent(key)}`);
+    await this.request('DELETE', base);
+    return true;
   }
 
   /** Data plane nodes connected to the control plane. */

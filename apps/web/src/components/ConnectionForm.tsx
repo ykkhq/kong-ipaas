@@ -9,7 +9,7 @@ interface Props {
   compact?: boolean;
 }
 
-/** Create or rotate a connection. The string goes straight to the Konnect vault and is never shown again. */
+/** Create or rotate a connection. The string goes straight to Vault and is not shown again. */
 export function ConnectionForm({ existing, onSaved, onCancel, compact }: Props) {
   const [name, setName] = useState(existing?.name ?? '');
   const [conn, setConn] = useState('');
@@ -60,7 +60,7 @@ export function ConnectionForm({ existing, onSaved, onCancel, compact }: Props) 
           onChange={(e) => setConn(e.target.value)}
         />
         <small className="muted">
-          Stored only in the Konnect vault. It is never shown again, and flows reference it as <code>{'{vault://ipaasdb/'}{name || 'name'}{'}'}</code>.
+          Stored only in Vault at <code>ipaas/db/{name || 'name'}</code> and not shown again. Flows refer to it by name only.
           From containers, reach your Mac's databases at <code>host.docker.internal</code>.
         </small>
       </label>
@@ -76,7 +76,7 @@ export function ConnectionForm({ existing, onSaved, onCancel, compact }: Props) 
         <span className="spacer" />
         {onCancel && <button className="ghost" onClick={onCancel}>Cancel</button>}
         <button className="primary" onClick={save} disabled={!!busy || (!existing && (!name || !conn)) || (!!existing && !conn && description === existing.description)}>
-          {busy === 'save' ? 'Saving…' : existing ? 'Save' : 'Save to vault'}
+          {busy === 'save' ? 'Saving…' : existing ? 'Save' : 'Save to Vault'}
         </button>
       </div>
     </div>

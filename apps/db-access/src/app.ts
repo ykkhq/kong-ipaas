@@ -1,12 +1,13 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { validConnectionString, type Pools } from './connections';
 import { ParamError, bindNamed } from './params';
+import { ResolveError, type VaultResolver } from './vault';
 
 export interface QueryRequest {
-  /** Resolved by the data plane from {vault://…}; never logged. */
-  connectionString: string;
-  /** Connection name, only used in error messages. */
+  /** Name of a connection stored in Vault (what flows send). */
   connection?: string;
+  /** Explicit string, used only by the API to test a connection before saving it. Never logged. */
+  connectionString?: string;
   sql: string;
   params?: Record<string, unknown>;
   maxRows?: number;
@@ -22,20 +23,36 @@ const MAX_ROWS = 10000;
  * Query errors are reported as HTTP 200 with `ok: false` so a DataKit flow can
  * branch on them and return the database message to its caller.
  */
-export function buildApp(pools: Pools, opts: { defaultMaxRows: number }): FastifyInstance {
+export function buildApp(pools: Pools, opts: { defaultMaxRows: number; vault?: VaultResolver }): FastifyInstance {
   const app = Fastify({ logger: true, bodyLimit: 1024 * 1024 });
 
   app.get('/health', async () => ({ ok: true, pools: pools.size }));
 
+  /** Called by the API after a connection is rotated or deleted. */
+  app.post<{ Body: { connection?: string } }>('/invalidate', async (req) => {
+    for (const old of opts.vault?.invalidate(req.body?.connection) ?? []) pools.drop(old);
+    return { ok: true };
+  });
+
   app.post<{ Body: QueryRequest }>('/query', async (req): Promise<QueryResult> => {
     const body = req.body ?? ({} as QueryRequest);
-    const label = typeof body.connection === 'string' && body.connection ? `"${body.connection}"` : 'the connection';
-    if (!body.connectionString) return { ok: false, error: `No connection string for ${label}; does the vault entry exist?` };
-    if (!validConnectionString(body.connectionString)) return { ok: false, error: `Connection string for ${label} is not a valid postgres:// URL` };
+    let connectionString = body.connectionString;
+    const label = body.connection ? `"${body.connection}"` : 'the connection';
+    if (!connectionString) {
+      if (typeof body.connection !== 'string' || !body.connection) return { ok: false, error: 'Request is missing "connection"' };
+      if (!opts.vault) return { ok: false, error: 'Vault is not configured on db-access' };
+      try {
+        connectionString = await opts.vault.connectionString(body.connection);
+      } catch (e) {
+        if (e instanceof ResolveError) return { ok: false, error: e.message };
+        return { ok: false, error: `Vault unavailable: ${(e as Error).message}` };
+      }
+    }
+    if (!validConnectionString(connectionString)) return { ok: false, error: `Connection string for ${label} is not a valid postgres:// URL` };
     if (typeof body.sql !== 'string' || !body.sql.trim()) return { ok: false, error: 'Request is missing "sql"' };
     if (body.params != null && (typeof body.params !== 'object' || Array.isArray(body.params))) return { ok: false, error: '"params" must be an object' };
 
-    const pool = pools.get(body.connectionString);
+    const pool = pools.get(connectionString);
 
     let bound;
     try {

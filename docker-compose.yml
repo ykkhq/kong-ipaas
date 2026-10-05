@@ -80,16 +80,21 @@ services:
       DP_STATUS_URL: http://kong-dp:8100
       MOCKS_URL: http://mocks:4010
       DB_ACCESS_IMAGE: ipaas-db-access:latest
-      # Seeded once into the Konnect vault as connection "sample" (more: DB_CONN_<NAME> in .env).
-      # After that, connections are managed in the UI and live only in the vault.
+      # Seeded once into Vault as connection "sample" (more: DB_CONN_<NAME> in .env).
+      # After that, connections are managed in the UI and live only in Vault.
       DB_CONN_SAMPLE: ${DB_CONN_SAMPLE:-postgres://ipaas_app:app@sample-db:5432/sample}
+      VAULT_ADDR: http://vault:8200
     secrets:
       - konnect_pat
     volumes:
       # Lets the API start the db-access container on demand.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Service tokens written by the Vault bootstrap (api: read/write, db-access: read-only).
+      - vault-tokens:/vault/tokens:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      vault:
         condition: service_healthy
       db-access-image:
         condition: service_completed_successfully
@@ -127,6 +132,26 @@ services:
     entrypoint: ["true"]
     restart: "no"
 
+  # Local Vault for database connection strings (KV v2 at ipaas/db/<name>).
+  # Initializes and unseals itself; see infra/vault/entrypoint.sh.
+  vault:
+    image: hashicorp/vault:${VAULT_VERSION:-1.20}
+    entrypoint: ["/vault/config/entrypoint.sh"]
+    cap_add: [IPC_LOCK]
+    volumes:
+      - ./infra/vault:/vault/config:ro
+      - vault-file:/vault/file
+      - vault-keys:/vault/keys
+      - vault-tokens:/vault/tokens
+    ports:
+      - "${VAULT_PORT:-8200}:8200"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready && wget -qO- http://127.0.0.1:8200/v1/sys/health >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped
+
   # Stub Postgres 16 with sample data for Database nodes (connection "sample").
   sample-db:
     image: postgres:16-alpine
@@ -150,6 +175,9 @@ volumes:
   dp-certs:
   pgdata:
   sampledb:
+  vault-file:
+  vault-keys:
+  vault-tokens:
 
 secrets:
   # Konnect token, read from a file so it never lands in .env or the image.

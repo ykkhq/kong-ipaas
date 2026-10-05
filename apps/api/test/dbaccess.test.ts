@@ -22,7 +22,7 @@ function fakeDocker(state: { container?: any; imageId?: string }) {
 }
 
 const healthy = (async () => new Response(JSON.stringify({ ok: true, connections: ['sample'] }))) as typeof fetch;
-const opts = { image: 'img', containerName: 'ipaas-db-access', alias: 'db-access', url: 'http://db-access:4020', env: { MAX_ROWS: '5' } };
+const opts = { image: 'img', containerName: 'ipaas-db-access', alias: 'db-access', url: 'http://db-access:4020', env: () => ({ MAX_ROWS: '5' }) };
 
 describe('DbAccessManager', () => {
   it('creates and starts the container on the API network with the alias and env', async () => {
@@ -38,9 +38,15 @@ describe('DbAccessManager', () => {
   });
 
   it('leaves a running, up-to-date container alone', async () => {
-    const { docker, calls } = fakeDocker({ imageId: 'sha256:1', container: { Id: 'c1', Image: 'sha256:1', State: { Running: true } } });
+    const { docker, calls } = fakeDocker({ imageId: 'sha256:1', container: { Id: 'c1', Image: 'sha256:1', State: { Running: true }, Config: { Env: ['MAX_ROWS=5', 'PATH=/bin'] } } });
     await new DbAccessManager(opts, docker, healthy).ensure();
     expect(calls).toEqual([]);
+  });
+
+  it('recreates the container when its env (e.g. Vault token) changed', async () => {
+    const { docker, calls } = fakeDocker({ imageId: 'sha256:1', container: { Id: 'old', Image: 'sha256:1', State: { Running: true }, Config: { Env: ['MAX_ROWS=1'] } } });
+    await new DbAccessManager(opts, docker, healthy).ensure();
+    expect(calls).toEqual(['DELETE /containers/old', 'POST /containers/create', 'POST /containers/c1/start']);
   });
 
   it('recreates the container when the image was rebuilt', async () => {
@@ -56,7 +62,8 @@ describe('DbAccessManager', () => {
     expect(s.error).toMatch(/Image img not found/);
   });
 
-  it('passes only tuning variables, never credentials', () => {
-    expect(dbAccessEnv({ DB_CONN_SAMPLE: 'postgres://u:p@h/d', KONNECT_PAT: 'secret', MAX_ROWS: '5' })).toEqual({ MAX_ROWS: '5' });
+  it('passes tuning and Vault settings, never connection strings or the Konnect token', () => {
+    expect(dbAccessEnv({ DB_CONN_SAMPLE: 'postgres://u:p@h/d', KONNECT_PAT: 'secret', MAX_ROWS: '5' }, { addr: 'http://vault:8200', mount: 'ipaas', token: 'hvs.ro' }))
+      .toEqual({ MAX_ROWS: '5', VAULT_ADDR: 'http://vault:8200', VAULT_KV_MOUNT: 'ipaas', VAULT_TOKEN: 'hvs.ro' });
   });
 });

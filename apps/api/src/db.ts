@@ -18,7 +18,7 @@ export interface FlowRow {
   updated_at: string;
 }
 
-/** Non-secret connection details; the connection string itself lives only in the Konnect vault. */
+/** Non-secret connection details; the connection string itself lives only in Vault. */
 export interface ConnectionRow {
   name: string;
   description: string;
@@ -68,22 +68,7 @@ export class Db {
         test_ok boolean,
         test_error text
       );
-      CREATE TABLE IF NOT EXISTS settings (
-        key text PRIMARY KEY,
-        value text NOT NULL
-      )`);
-  }
-
-  // ---- settings ----------------------------------------------------------------
-
-  async getSetting(key: string): Promise<string | undefined> {
-    return (await this.pool.query<{ value: string }>('SELECT value FROM settings WHERE key = $1', [key])).rows[0]?.value;
-  }
-
-  /** Stores the value only if the key is new; returns the stored value either way. */
-  async initSetting(key: string, value: string): Promise<string> {
-    await this.pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [key, value]);
-    return (await this.getSetting(key))!;
+      DROP TABLE IF EXISTS settings`);
   }
 
   // ---- connections -------------------------------------------------------------

@@ -45,7 +45,7 @@ export function DatabaseFields({ data, inputs, onChange }: Props) {
   return (
     <>
       <div className="field">
-        <span>Connection (from the Konnect vault)</span>
+        <span>Connection (stored in Vault)</span>
         <div className="row">
           <select
             className="grow" value={data.connection} disabled={!conns}
@@ -60,7 +60,7 @@ export function DatabaseFields({ data, inputs, onChange }: Props) {
           {connErr ? connErr
             : !conns ? 'Loading connections…'
             : !selected ? 'Choose an existing connection or create one.'
-            : <>Resolved at request time from <code>{'{vault://ipaasdb/'}{selected.name}{'}'}</code>. <a href="#/connections">Manage connections</a></>}
+            : <>db-access reads <code>ipaas/db/{selected.name}</code> from Vault at query time. <a href="#/connections">Manage connections</a></>}
         </small>
       </div>
       {creating && (
