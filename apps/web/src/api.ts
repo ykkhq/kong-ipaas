@@ -61,6 +61,45 @@ export type QueryResult =
   | { ok: true; rows: Record<string, unknown>[]; rowCount: number; fields: string[]; truncated: boolean; durationMs: number }
   | { ok: false; error: string; code?: string; detail?: string; hint?: string; position?: string };
 
+// ---- EDI (edi-gateway admin API via /api/edi) -------------------------------
+export type EdiProtocol = 'sftp' | 'as2';
+
+export interface EdiPartner {
+  id: string;
+  name: string;
+  protocol: EdiProtocol;
+  enabled: boolean;
+  config: Record<string, any>;
+  inbound_flow: string | null;
+  secrets: Record<string, boolean>;
+  updated_at: string;
+}
+
+export interface EdiMessage {
+  id: string;
+  direction: 'in' | 'out';
+  protocol: EdiProtocol;
+  partner_id: string | null;
+  partner_name: string | null;
+  status: string;
+  message_id: string | null;
+  filename: string | null;
+  content_type: string | null;
+  size: number;
+  receipt: Record<string, any> | null;
+  error: string | null;
+  flow_slug: string | null;
+  flow_status: number | null;
+  created_at: string;
+}
+
+export interface EdiStation {
+  as2: { as2Id?: string; email?: string; publicUrl?: string; certificate: string | null; certInfo: { subject: string; notAfter: string; fingerprint: string } | null };
+  sftp: { port: number; hostKeyFingerprint: string };
+}
+
+export type EdiPartnerInput = Pick<EdiPartner, 'name' | 'protocol' | 'enabled' | 'config' | 'inbound_flow'> & { secrets?: Record<string, string> };
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly data: any) {
     super(message);
@@ -100,5 +139,21 @@ export const api = {
   deleteConnection: (name: string) => call<void>('DELETE', `/connections/${name}`),
   testConnectionString: (connectionString: string) => call<QueryResult>('POST', '/connections/test', { connectionString }),
   testConnection: (name: string) => call<QueryResult>('POST', `/connections/${name}/test`),
+  edi: {
+    partners: () => call<EdiPartner[]>('GET', '/edi/partners'),
+    createPartner: (p: EdiPartnerInput) => call<EdiPartner>('POST', '/edi/partners', p),
+    updatePartner: (id: string, p: EdiPartnerInput) => call<EdiPartner>('PUT', `/edi/partners/${id}`, p),
+    deletePartner: (id: string) => call<void>('DELETE', `/edi/partners/${id}`),
+    testPartner: (id: string) => call<{ ok: boolean; error?: string; hostKey?: string; files?: string[]; httpStatus?: number }>('POST', `/edi/partners/${id}/test`),
+    pollPartner: (id: string) => call<{ ok: boolean; received?: number; error?: string }>('POST', `/edi/partners/${id}/poll`),
+    messages: (q: { partner?: string; direction?: string; limit?: number } = {}) =>
+      call<EdiMessage[]>('GET', `/edi/messages?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]))}`),
+    forward: (id: string) => call<EdiMessage>('POST', `/edi/messages/${id}/forward`),
+    send: (b: { partner: string; filename?: string; contentType?: string; content: string }) =>
+      call<{ ok: boolean; id?: string; status?: string; messageId?: string; error?: string; receipt?: Record<string, any> }>('POST', '/edi/send', b),
+    station: () => call<EdiStation>('GET', '/edi/station'),
+    saveAs2Station: (s: { as2Id: string; email?: string; publicUrl?: string }) => call<{ ok: boolean }>('PUT', '/edi/station/as2', s),
+    as2Certificate: (b: { generate?: boolean; certificate?: string; privateKey?: string }) => call<{ ok: boolean }>('POST', '/edi/station/as2/certificate', b),
+  },
   dbQuery: (req: { connection: string; sql: string; params?: Record<string, unknown> }) => call<QueryResult>('POST', '/db/query', req),
 };

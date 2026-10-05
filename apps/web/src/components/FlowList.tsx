@@ -94,11 +94,12 @@ export function FlowList() {
   );
 }
 
-export function Nav({ active }: { active: 'flows' | 'connections' }) {
+export function Nav({ active }: { active: 'flows' | 'connections' | 'edi' }) {
   return (
     <nav className="nav">
       <a href="#/" className={active === 'flows' ? 'active' : ''}>Flows</a>
       <a href="#/connections" className={active === 'connections' ? 'active' : ''}>Connections</a>
+      <a href="#/edi" className={active === 'edi' ? 'active' : ''}>EDI</a>
     </nav>
   );
 }

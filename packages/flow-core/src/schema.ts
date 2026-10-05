@@ -33,6 +33,20 @@ export interface DatabaseData {
   errorStatus?: number;
 }
 
+export interface EdiSendData {
+  label: string;
+  /** EDI partner name (configured in the EDI section; defines protocol and settings). */
+  partner: string;
+  /** jq expression producing the file name (string). */
+  filename?: string;
+  /** jq expression producing the document: a string is sent as-is, anything else as JSON. */
+  content: string;
+  /** MIME type of the document (e.g. application/edifact, text/csv). */
+  contentType?: string;
+  /** Status returned to the caller when sending fails (default 502). */
+  errorStatus?: number;
+}
+
 export interface NodeDataByKind {
   trigger: TriggerData;
   http: HttpJobData;
@@ -43,9 +57,10 @@ export interface NodeDataByKind {
   xml: XmlData;
   response: ResponseData;
   database: DatabaseData;
+  edi_send: EdiSendData;
 }
 export type NodeKind = keyof NodeDataByKind;
-export const NODE_KINDS = ['trigger', 'http', 'database', 'transform', 'condition', 'static', 'secret', 'xml', 'response'] as const satisfies readonly NodeKind[];
+export const NODE_KINDS = ['trigger', 'http', 'database', 'edi_send', 'transform', 'condition', 'static', 'secret', 'xml', 'response'] as const satisfies readonly NodeKind[];
 
 export type FlowNode = {
   [K in NodeKind]: { id: string; type: K; position: { x: number; y: number }; data: NodeDataByKind[K] };

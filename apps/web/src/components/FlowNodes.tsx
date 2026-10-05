@@ -10,6 +10,7 @@ function summary(n: FlowNode): string {
   switch (n.type) {
     case 'trigger': return n.data.method;
     case 'http': return `${n.data.method} ${n.data.url}`;
+    case 'edi_send': return `${n.data.partner || '(no partner)'} · ${n.data.contentType || 'application/octet-stream'}`;
     case 'database': return `${n.data.connection} · ${n.data.sql.replace(/\s+/g, ' ')}`;
     case 'transform':
     case 'condition': return n.data.expr;

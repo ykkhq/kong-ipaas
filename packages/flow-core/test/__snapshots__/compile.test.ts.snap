@@ -185,7 +185,7 @@ exports[`compileFlow > compiles the seeded examples > customer-db 1`] = `
       "inputs": {
         "r": "FIND_CUSTOMER__CALL.body",
       },
-      "jq": "if .r == null then null else {rows: .r.rows, row_count: .r.rowCount, fields: .r.fields, truncated: .r.truncated} end",
+      "jq": "if .r == null then null else (.r | {rows: .rows, row_count: .rowCount, fields: .fields, truncated: .truncated}) end",
       "name": "FIND_CUSTOMER",
       "type": "jq",
     },
@@ -256,7 +256,7 @@ exports[`compileFlow > compiles the seeded examples > customer-db 1`] = `
       "inputs": {
         "r": "CUSTOMER_ORDERS__CALL.body",
       },
-      "jq": "if .r == null then null else {rows: .r.rows, row_count: .r.rowCount, fields: .r.fields, truncated: .r.truncated} end",
+      "jq": "if .r == null then null else (.r | {rows: .rows, row_count: .rowCount, fields: .fields, truncated: .truncated}) end",
       "name": "CUSTOMER_ORDERS",
       "type": "jq",
     },
@@ -316,6 +316,40 @@ exports[`compileFlow > compiles the seeded examples > customer-db 1`] = `
 }
 `;
 
+exports[`compileFlow > compiles the seeded examples > edi-inbox 1`] = `
+{
+  "debug": true,
+  "nodes": [
+    {
+      "inputs": {
+        "doc__body": "request.body",
+        "doc__headers": "request.headers",
+        "doc__query": "request.query",
+      },
+      "jq": "(. as $in | ($in | with_entries(select(.key | test("__(query|headers|body)$") | not))) + {doc: {query: .doc__query, headers: .doc__headers, body: .doc__body}}) | (.doc.body as $b | {partner: $b.edi.partner, protocol: $b.edi.protocol, file: $b.edi.filename, size: $b.edi.size, lines: (if $b.encoding == "utf8" then ($b.document | split("\\n") | map(select(length > 0)) | length) else null end), first_line: (if $b.encoding == "utf8" then ($b.document | split("\\n") | .[0]) else null end)})",
+      "name": "SUMMARIZE",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "summary": "SUMMARIZE",
+      },
+      "jq": "({accepted: true, summary: .summary})",
+      "name": "RESPONSE__BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "RESPONSE__BODY",
+      },
+      "name": "RESPONSE",
+      "status": 200,
+      "type": "exit",
+    },
+  ],
+}
+`;
+
 exports[`compileFlow > compiles the seeded examples > inventory 1`] = `
 {
   "debug": true,
@@ -345,6 +379,182 @@ exports[`compileFlow > compiles the seeded examples > inventory 1`] = `
         "in_stock": "IN_STOCK",
       },
       "jq": "({in_stock: .in_stock})",
+      "name": "RESPONSE__BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "RESPONSE__BODY",
+      },
+      "name": "RESPONSE",
+      "status": 200,
+      "type": "exit",
+    },
+  ],
+}
+`;
+
+exports[`compileFlow > compiles the seeded examples > orders-to-edi 1`] = `
+{
+  "debug": true,
+  "nodes": [
+    {
+      "inputs": {
+        "req__headers": "request.headers",
+        "req__query": "request.query",
+      },
+      "jq": "(. as $in | ($in | with_entries(select(.key | test("__(query|headers|body)$") | not))) + {req: {query: .req__query, headers: .req__headers}}) | ({"id": (.req.query.id // "1")})",
+      "name": "CUSTOMER_ORDERS__PARAMS",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "p": "CUSTOMER_ORDERS__PARAMS",
+      },
+      "jq": "{connection: "sample", sql: "SELECT o.id, o.status, sum(p.price * i.qty)::float AS total\\nFROM orders o\\nJOIN order_items i ON i.order_id = o.id\\nJOIN products p ON p.sku = i.sku\\nWHERE o.customer_id = :id\\nGROUP BY o.id\\nORDER BY o.id", params: .p}",
+      "name": "CUSTOMER_ORDERS__REQ",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "CUSTOMER_ORDERS__REQ",
+      },
+      "method": "POST",
+      "name": "CUSTOMER_ORDERS__CALL",
+      "timeout": 15000,
+      "type": "call",
+      "url": "http://db-access:4020/query",
+    },
+    {
+      "inputs": {
+        "r": "CUSTOMER_ORDERS__CALL.body",
+      },
+      "jq": ".r == null or .r.ok == true",
+      "name": "CUSTOMER_ORDERS__OK",
+      "type": "jq",
+    },
+    {
+      "else": [
+        "CUSTOMER_ORDERS__ERR_BODY",
+        "CUSTOMER_ORDERS__ERR",
+      ],
+      "input": "CUSTOMER_ORDERS__OK",
+      "name": "CUSTOMER_ORDERS__GATE",
+      "then": [
+        "CUSTOMER_ORDERS",
+      ],
+      "type": "branch",
+    },
+    {
+      "inputs": {
+        "r": "CUSTOMER_ORDERS__CALL.body",
+      },
+      "jq": "{error: "database query failed", node: "Customer Orders", message: .r.error, code: .r.code, detail: .r.detail, hint: .r.hint}",
+      "name": "CUSTOMER_ORDERS__ERR_BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "CUSTOMER_ORDERS__ERR_BODY",
+      },
+      "name": "CUSTOMER_ORDERS__ERR",
+      "status": 502,
+      "type": "exit",
+    },
+    {
+      "inputs": {
+        "r": "CUSTOMER_ORDERS__CALL.body",
+      },
+      "jq": "if .r == null then null else (.r | {rows: .rows, row_count: .rowCount, fields: .fields, truncated: .truncated}) end",
+      "name": "CUSTOMER_ORDERS",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "orders": "CUSTOMER_ORDERS",
+      },
+      "jq": "("order_id,status,total\\n" + (.orders.rows | map("\\(.id),\\(.status),\\(.total)") | join("\\n")) + "\\n")",
+      "name": "TO_CSV",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "csv": "TO_CSV",
+        "req__headers": "request.headers",
+        "req__query": "request.query",
+      },
+      "jq": "(. as $in | ($in | with_entries(select(.key | test("__(query|headers|body)$") | not))) + {req: {query: .req__query, headers: .req__headers}}) | ({filename: ("orders-" + (.req.query.id // "1") + ".csv"), content: (.csv)})",
+      "name": "SEND_TO_PARTNER__PARAMS",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "p": "SEND_TO_PARTNER__PARAMS",
+      },
+      "jq": "{partner: "demo-sftp", contentType: "text/csv", filename: .p.filename, content: .p.content}",
+      "name": "SEND_TO_PARTNER__REQ",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "SEND_TO_PARTNER__REQ",
+      },
+      "method": "POST",
+      "name": "SEND_TO_PARTNER__CALL",
+      "timeout": 90000,
+      "type": "call",
+      "url": "http://edi-gateway:4100/send",
+    },
+    {
+      "inputs": {
+        "r": "SEND_TO_PARTNER__CALL.body",
+      },
+      "jq": ".r == null or .r.ok == true",
+      "name": "SEND_TO_PARTNER__OK",
+      "type": "jq",
+    },
+    {
+      "else": [
+        "SEND_TO_PARTNER__ERR_BODY",
+        "SEND_TO_PARTNER__ERR",
+      ],
+      "input": "SEND_TO_PARTNER__OK",
+      "name": "SEND_TO_PARTNER__GATE",
+      "then": [
+        "SEND_TO_PARTNER",
+      ],
+      "type": "branch",
+    },
+    {
+      "inputs": {
+        "r": "SEND_TO_PARTNER__CALL.body",
+      },
+      "jq": "{error: "edi send failed", node: "Send to Partner", partner: "demo-sftp", message: .r.error}",
+      "name": "SEND_TO_PARTNER__ERR_BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "SEND_TO_PARTNER__ERR_BODY",
+      },
+      "name": "SEND_TO_PARTNER__ERR",
+      "status": 502,
+      "type": "exit",
+    },
+    {
+      "inputs": {
+        "r": "SEND_TO_PARTNER__CALL.body",
+      },
+      "jq": "if .r == null then null else (.r | {id: .id, message_id: .messageId, status: .status, receipt: .receipt}) end",
+      "name": "SEND_TO_PARTNER",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "edi": "SEND_TO_PARTNER",
+        "orders": "CUSTOMER_ORDERS",
+      },
+      "jq": "({sent: .edi, orders: .orders.row_count})",
       "name": "RESPONSE__BODY",
       "type": "jq",
     },

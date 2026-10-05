@@ -3,6 +3,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { HTTP_METHODS, lowerSnake, type FlowNode } from '@ipaas/flow-core';
 import { KINDS } from '../catalog';
 import { DatabaseFields } from './DatabaseFields';
+import { EdiSendFields } from './EdiSendFields';
 
 interface Props {
   node?: FlowNode;
@@ -69,6 +70,7 @@ export function Inspector({ node, edge, nodes, edges, slug, onNode, onEdge, onDe
       )}
 
       {node.type === 'database' && <DatabaseFields key={node.id} data={d} inputs={inputs} onChange={set} />}
+      {node.type === 'edi_send' && <EdiSendFields key={node.id} data={d} inputs={inputs} onChange={set} />}
 
       {(node.type === 'transform' || node.type === 'condition') && (
         <Jq label={node.type === 'condition' ? 'Condition (jq → boolean)' : 'jq expression'} value={d.expr} onChange={(expr) => set({ expr })} rows={6} />

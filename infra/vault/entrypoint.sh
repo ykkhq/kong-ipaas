@@ -41,18 +41,21 @@ if vault status -format=json 2>/dev/null | grep -q '"sealed": true'; then
   vault operator unseal "$(cat "$KEYS/unseal-key")" >/dev/null
 fi
 
-if [ ! -s "$TOKENS/api-token" ] || [ ! -s "$TOKENS/db-access-token" ]; then
-  echo "==> Configuring secrets engine, policies and service tokens"
-  export VAULT_TOKEN="$(cat "$KEYS/root-token")"
-  vault secrets list -format=json | grep -q '"ipaas/"' || vault secrets enable -path=ipaas -version=2 kv
-  vault policy write ipaas-api /vault/config/api-policy.hcl
-  vault policy write ipaas-db-access /vault/config/db-access-policy.hcl
-  # Periodic, orphan tokens: they never expire as long as they are renewed within the period.
-  vault token create -policy=ipaas-api -period=768h -orphan -display-name=ipaas-api -field=token > "$TOKENS/api-token"
-  vault token create -policy=ipaas-db-access -period=768h -orphan -display-name=ipaas-db-access -field=token > "$TOKENS/db-access-token"
-  chmod 644 "$TOKENS/api-token" "$TOKENS/db-access-token"
-  unset VAULT_TOKEN
-fi
+# Engine and policies are (re)applied on every start so new policies roll out;
+# a service token is only created when its file is missing.
+echo "==> Applying secrets engine and policies"
+export VAULT_TOKEN="$(cat "$KEYS/root-token")"
+vault secrets list -format=json | grep -q '"ipaas/"' || vault secrets enable -path=ipaas -version=2 kv
+for svc in api db-access edi; do
+  vault policy write "ipaas-$svc" "/vault/config/$svc-policy.hcl" >/dev/null
+  if [ ! -s "$TOKENS/$svc-token" ]; then
+    echo "==> Creating service token for $svc"
+    # Periodic, orphan tokens: they never expire as long as they are renewed within the period.
+    vault token create -policy="ipaas-$svc" -period=768h -orphan -display-name="ipaas-$svc" -field=token > "$TOKENS/$svc-token"
+    chmod 644 "$TOKENS/$svc-token"
+  fi
+done
+unset VAULT_TOKEN
 
 touch /tmp/ready
 echo "==> Vault ready"

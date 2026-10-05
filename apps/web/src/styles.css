@@ -175,3 +175,22 @@ pre.code { margin: 0; padding: 10px; background: var(--bg); border: 1px solid va
 .conn-form { display: flex; flex-direction: column; gap: 4px; max-width: 640px; }
 .conn-form.compact .field { margin: 4px 0; }
 .chip { display: inline-block; padding: 1px 8px; margin: 1px 4px 1px 0; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; }
+
+/* EDI */
+.list.wide { max-width: 1280px; }
+.subtabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.subtabs button { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; color: var(--muted); }
+.subtabs button.active { color: var(--text); border-bottom-color: var(--primary-2); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 14px; }
+.row.wrap { flex-wrap: wrap; gap: 8px 16px; margin: 6px 0; }
+.proto { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); }
+.proto.as2 { color: #a78bfa; } .proto.sftp { color: #34d399; }
+tr.disabled td { opacity: .55; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: #ffffff05; }
+tr.detail td { background: var(--bg); }
+tr.detail pre { max-height: 260px; margin-top: 6px; }
+.btn-link { display: inline-block; padding: 6px 10px; font-size: 13px; }
+.small-btn { padding: 2px 8px; font-size: 11px; align-self: flex-start; }
+@media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }

@@ -139,6 +139,28 @@ describe('compileFlow', () => {
     ]);
   });
 
+  it('compiles an EDI Send node into a guarded edi-gateway call', () => {
+    const edi: FlowNode = { id: 'e', type: 'edi_send', position: pos, data: { label: 'Send PO', partner: 'acme', filename: '"PO-" + .req.query.id + ".edi"', content: '.req.query | tostring', contentType: 'application/edifact', errorStatus: 504 } };
+    const r = compileFlow(flow(
+      [trigger, edi, response()],
+      [{ id: '1', source: 't', target: 'e', data: { alias: 'req' } }, { id: '2', source: 'e', target: 'r', data: { alias: 'sent' } }],
+    ), { ediGatewayUrl: 'http://edi:1/' });
+    expect(r.errors).toEqual([]);
+    expect(byName(r, 'SEND_PO__PARAMS')!.jq).toContain('({filename: ("PO-" + .req.query.id + ".edi"), content: (.req.query | tostring)})');
+    expect(byName(r, 'SEND_PO__REQ')!.jq).toBe('{partner: "acme", contentType: "application/edifact", filename: .p.filename, content: .p.content}');
+    expect(byName(r, 'SEND_PO__CALL')).toMatchObject({ type: 'call', method: 'POST', url: 'http://edi:1/send', timeout: 90000 });
+    expect(byName(r, 'SEND_PO__GATE')).toMatchObject({ then: ['SEND_PO'], else: ['SEND_PO__ERR_BODY', 'SEND_PO__ERR'] });
+    expect(byName(r, 'SEND_PO__ERR')).toMatchObject({ type: 'exit', status: 504 });
+    expect(byName(r, 'SEND_PO__ERR_BODY')!.jq).toContain('error: "edi send failed"');
+    expect(r.failPaths.e).toEqual(['SEND_PO__ERR_BODY', 'SEND_PO__ERR']);
+  });
+
+  it('validates EDI Send nodes', () => {
+    const r = compileFlow(flow([trigger, { id: 'e', type: 'edi_send', position: pos, data: { label: 'E', partner: '', content: ' ' } }, response()],
+      [{ id: '1', source: 'e', target: 'r' }]));
+    expect(r.errors.map((e) => e.message)).toEqual(['E: choose an EDI partner', 'E: content expression is empty']);
+  });
+
   it('dedupes node names', () => {
     const r = compileFlow(flow([trigger, http('a', 'Call', 'http://x/1'), http('b', 'Call', 'http://x/2'), response()],
       [{ id: '1', source: 'a', target: 'r' }, { id: '2', source: 'b', target: 'r', data: { alias: 'call2' } }]));

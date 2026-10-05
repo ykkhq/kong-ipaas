@@ -26,10 +26,11 @@ export class Deployer {
     private syncTimeoutMs: number,
     private dbAccess?: DbAccessManager,
     private connections?: ConnectionService,
+    private ediGatewayUrl?: string,
   ) {}
 
   compile(row: Pick<FlowRow, 'name' | 'slug' | 'debug' | 'graph'>): CompileResult {
-    return compileRow(row, { dbAccessUrl: this.dbAccess?.url });
+    return compileRow(row, { dbAccessUrl: this.dbAccess?.url, ediGatewayUrl: this.ediGatewayUrl });
   }
 
   /** Pushes service + route + DataKit plugin to Konnect, then waits for the DP to pick it up. */

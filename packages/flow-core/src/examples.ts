@@ -91,6 +91,65 @@ export function exampleFlows(mocks = 'http://mocks:4010'): Flow[] {
       },
     },
     {
+      // Inbound: edi-gateway POSTs every document received from a partner whose inbound flow is "edi-inbox".
+      name: 'EDI Inbox',
+      slug: 'edi-inbox',
+      graph: {
+        nodes: [
+          { id: 'trigger', type: 'trigger', position: { x: 0, y: 100 }, data: { label: 'EDI Document', method: 'POST' } },
+          {
+            id: 'parse', type: 'transform', position: { x: 280, y: 100 },
+            data: {
+              label: 'Summarize',
+              expr: '.doc.body as $b | {partner: $b.edi.partner, protocol: $b.edi.protocol, file: $b.edi.filename, size: $b.edi.size, '
+                + 'lines: (if $b.encoding == "utf8" then ($b.document | split("\\n") | map(select(length > 0)) | length) else null end), '
+                + 'first_line: (if $b.encoding == "utf8" then ($b.document | split("\\n") | .[0]) else null end)}',
+            },
+          },
+          { id: 'response', type: 'response', position: { x: 560, y: 100 }, data: { label: 'Response', status: 200, expr: '{accepted: true, summary: .summary}' } },
+        ],
+        edges: [
+          { id: 'e1', source: 'trigger', target: 'parse', data: { alias: 'doc' } },
+          { id: 'e2', source: 'parse', target: 'response', data: { alias: 'summary' } },
+        ],
+      },
+    },
+    {
+      // Outbound: database -> CSV -> EDI Send (partner "demo-sftp" drops the file in its /outbox).
+      name: 'Orders to EDI',
+      slug: 'orders-to-edi',
+      graph: {
+        nodes: [
+          { id: 'trigger', type: 'trigger', position: { x: 0, y: 140 }, data: { label: 'Request', method: 'GET' } },
+          {
+            id: 'orders', type: 'database', position: { x: 260, y: 40 },
+            data: {
+              label: 'Customer Orders', connection: 'sample',
+              sql: 'SELECT o.id, o.status, sum(p.price * i.qty)::float AS total\nFROM orders o\nJOIN order_items i ON i.order_id = o.id\nJOIN products p ON p.sku = i.sku\nWHERE o.customer_id = :id\nGROUP BY o.id\nORDER BY o.id',
+              params: { id: '.req.query.id // "1"' },
+            },
+          },
+          {
+            id: 'csv', type: 'transform', position: { x: 520, y: 40 },
+            data: { label: 'To CSV', expr: '"order_id,status,total\\n" + (.orders.rows | map("\\(.id),\\(.status),\\(.total)") | join("\\n")) + "\\n"' },
+          },
+          {
+            id: 'send', type: 'edi_send', position: { x: 780, y: 140 },
+            data: { label: 'Send to Partner', partner: 'demo-sftp', filename: '"orders-" + (.req.query.id // "1") + ".csv"', content: '.csv', contentType: 'text/csv' },
+          },
+          { id: 'response', type: 'response', position: { x: 1040, y: 140 }, data: { label: 'Response', status: 200, expr: '{sent: .edi, orders: .orders.row_count}' } },
+        ],
+        edges: [
+          { id: 'e1', source: 'trigger', target: 'orders', data: { alias: 'req' } },
+          { id: 'e2', source: 'orders', target: 'csv', data: { alias: 'orders' } },
+          { id: 'e3', source: 'csv', target: 'send', data: { alias: 'csv' } },
+          { id: 'e4', source: 'trigger', target: 'send', data: { alias: 'req' } },
+          { id: 'e5', source: 'send', target: 'response', data: { alias: 'edi' } },
+          { id: 'e6', source: 'orders', target: 'response', data: { alias: 'orders' } },
+        ],
+      },
+    },
+    {
       name: 'Inventory (XML to JSON)',
       slug: 'inventory',
       graph: {

@@ -27,6 +27,10 @@ export const KINDS: Record<NodeKind, KindInfo> = {
     title: 'Database', description: 'Run a SQL query (variables are bound safely)', color: '#60a5fa', glyph: '⛁', inputs: true, output: true,
     defaults: () => ({ label: 'Query', connection: 'sample', sql: 'SELECT *\nFROM customers\nWHERE id = :id', params: { id: '.req.query.id // "1"' } }),
   },
+  edi_send: {
+    title: 'EDI Send', description: 'Send a document to a trading partner (AS2, SFTP, …)', color: '#22d3ee', glyph: '✉', inputs: true, output: true,
+    defaults: () => ({ label: 'Send EDI', partner: '', filename: '"document.edi"', content: '.req.body', contentType: 'application/octet-stream' }),
+  },
   transform: {
     title: 'Transform', description: 'Reshape data with jq', color: '#f472b6', glyph: '{ }', inputs: true, output: true,
     defaults: () => ({ label: 'Transform', expr: '.' }),
@@ -53,7 +57,7 @@ export const KINDS: Record<NodeKind, KindInfo> = {
   },
 };
 
-export const PALETTE: NodeKind[] = ['trigger', 'http', 'database', 'transform', 'condition', 'static', 'secret', 'xml', 'response'];
+export const PALETTE: NodeKind[] = ['trigger', 'http', 'database', 'edi_send', 'transform', 'condition', 'static', 'secret', 'xml', 'response'];
 
 let seq = 0;
 export function newNode(kind: NodeKind, position: { x: number; y: number }): FlowNode {

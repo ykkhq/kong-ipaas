@@ -37,6 +37,12 @@ services:
       KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl"
       KONG_STATUS_LISTEN: "0.0.0.0:8100"
       KONG_NGINX_WORKER_PROCESSES: "2"
+      # Containers started on demand (db-access) or recreated get new IPs; Docker DNS
+      # answers with long TTLs, so keep Kong's DNS cache short (legacy + new client).
+      KONG_DNS_VALID_TTL: "5"
+      KONG_DNS_STALE_TTL: "10"
+      KONG_RESOLVER_VALID_TTL: "5"
+      KONG_RESOLVER_STALE_TTL: "10"
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
     volumes:
@@ -122,6 +128,31 @@ services:
       - "${MOCKS_PORT:-4010}:4010"
     restart: unless-stopped
 
+  # EDI protocols (SFTP, AS2; more to come): partners, listeners, message log.
+  # Admin API on 4100 (UI via nginx /api/edi/, flows via /send); AS2 on 4080; SFTP on 2222.
+  edi-gateway:
+    build:
+      context: .
+      dockerfile: apps/edi-gateway/Dockerfile
+    environment:
+      DATABASE_URL: postgres://ipaas:ipaas@postgres:5432/ipaas
+      VAULT_ADDR: http://vault:8200
+      DP_PROXY_URL: http://kong-dp:8000
+      # URL partners use for async MDNs (set to your host's reachable address).
+      AS2_PUBLIC_URL: ${AS2_PUBLIC_URL:-http://localhost:4080/as2}
+    volumes:
+      - edi-data:/data
+      - vault-tokens:/vault/tokens:ro
+    ports:
+      - "${AS2_PORT:-4080}:4080"
+      - "${SFTP_PORT:-2222}:2222"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Builds the db-access image only. The API runs the container itself
   # (ipaas-db-access) once a flow uses a Database node, and keeps it running.
   db-access-image:
@@ -178,6 +209,7 @@ volumes:
   vault-file:
   vault-keys:
   vault-tokens:
+  edi-data:
 
 secrets:
   # Konnect token, read from a file so it never lands in .env or the image.

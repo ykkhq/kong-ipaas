@@ -1,4 +1,4 @@
-import type { DatabaseData, Flow, FlowEdge, FlowNode, HttpJobData, NodeKind } from './schema';
+import type { DatabaseData, EdiSendData, Flow, FlowEdge, FlowNode, HttpJobData, NodeKind } from './schema';
 import { HTTP_METHODS, SLUG_RE } from './schema';
 import { ALIAS_RE, NameAllocator, lowerSnake, upperSnake } from './naming';
 import { hasPlaceholders, templateFallback, templateToJq } from './template';
@@ -27,9 +27,12 @@ export interface CompileResult {
 export interface CompileOptions {
   /** Base URL of the db-access service as seen from the data plane. */
   dbAccessUrl?: string;
+  /** Base URL of the edi-gateway internal API as seen from the data plane. */
+  ediGatewayUrl?: string;
 }
 
 export const DEFAULT_DB_ACCESS_URL = 'http://db-access:4020';
+export const DEFAULT_EDI_GATEWAY_URL = 'http://edi-gateway:4100';
 
 
 /** A data input of a node: the alias it gets in jq, and the DataKit references feeding it. */
@@ -44,6 +47,7 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
   const failPaths: Record<string, string[]> = {};
   const fail = (): CompileResult => ({ ok: false, errors, nodeMap, failPaths });
   const dbAccessUrl = (opts.dbAccessUrl ?? DEFAULT_DB_ACCESS_URL).replace(/\/+$/, '');
+  const ediGatewayUrl = (opts.ediGatewayUrl ?? DEFAULT_EDI_GATEWAY_URL).replace(/\/+$/, '');
   const { nodes, edges } = flow.graph;
 
   if (!SLUG_RE.test(flow.slug)) errors.push({ message: `Invalid slug "${flow.slug}" (use lowercase letters, digits and dashes)` });
@@ -140,6 +144,14 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
         if (!Number.isInteger(st) || st < 100 || st > 599) errors.push({ nodeId: n.id, message: `${d.label}: error status must be 100-599` });
         break;
       }
+      case 'edi_send': {
+        const d = n.data;
+        if (!/^[A-Za-z0-9][\w.-]{0,63}$/.test(d.partner ?? '')) errors.push({ nodeId: n.id, message: `${d.label}: choose an EDI partner` });
+        if (!d.content?.trim()) errors.push({ nodeId: n.id, message: `${d.label}: content expression is empty` });
+        const st = d.errorStatus ?? 502;
+        if (!Number.isInteger(st) || st < 100 || st > 599) errors.push({ nodeId: n.id, message: `${d.label}: error status must be 100-599` });
+        break;
+      }
       case 'response':
         if (!ins.length) errors.push({ nodeId: n.id, message: 'Response needs at least one input to aggregate' });
         if (!Number.isInteger(n.data.status) || n.data.status < 100 || n.data.status > 599) errors.push({ nodeId: n.id, message: 'Response status must be 100-599' });
@@ -229,6 +241,9 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
       case 'database':
         out.push(...compileDatabase(n, name, ins));
         break;
+      case 'edi_send':
+        out.push(...compileEdiSend(n, name, ins));
+        break;
       case 'response': {
         const { inputs, wrap } = jqInputs(ins);
         const body = helper(n, 'BODY');
@@ -240,18 +255,17 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
   }
 
   /**
-   * PARAMS (jq over inputs) -> REQ -> CALL (POST db-access /query) -> OK -> GATE.
-   * Only the connection name travels through Kong; db-access resolves the
-   * connection string from the local Vault.
-   * db-access answers 200 with {ok:false,...} on errors. The gate runs the result
-   * node on success, or the error exit, which ends the flow with the database
-   * message. (A DataKit node may belong to one branch only, so the gate owns just
-   * this node's own result and error path.)
+   * Guarded service call shared by Database and EDI Send nodes:
+   *   PARAMS (user jq over inputs) -> REQ (fixed fields + .p) -> CALL -> OK -> GATE
+   *   GATE then: result node; else: error body + error exit (the flow stops with the service's message).
+   * Services answer 200 with {ok:false, error} on failure so the message reaches the caller.
+   * Only PARAMS/REQ/CALL may be skipped by a condition; the rest must run (a skipped call counts as OK).
    */
-  function compileDatabase(n: FlowNode & { type: 'database' }, name: string, ins: DataInput[]): DatakitNode[] {
-    const d: DatabaseData = n.data;
+  function guardedCall(
+    n: FlowNode, name: string, ins: DataInput[],
+    spec: { paramsJq: string; requestJq: string; url: string; timeout: number; resultJq: string; errorJq: string; errorStatus: number },
+  ): DatakitNode[] {
     const { inputs, wrap } = jqInputs(ins);
-    const params = Object.entries(d.params ?? {}).map(([k, v]) => `${JSON.stringify(k)}: (${v.trim()})`).join(', ');
     const paramsNode = helper(n, 'PARAMS');
     const req = helper(n, 'REQ');
     const call = helper(n, 'CALL');
@@ -263,24 +277,45 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResul
     gateNames.set(n.id, [paramsNode, req, call]);
     const res = `${call}.body`;
     return [
-      { name: paramsNode, type: 'jq', inputs, jq: wrap(`{${params}}`) },
-      {
-        name: req, type: 'jq', inputs: { p: paramsNode },
-        jq: `{connection: ${JSON.stringify(d.connection)}, sql: ${JSON.stringify(d.sql)}, params: .p}`,
-      },
-      // Fail fast if db-access itself is unreachable (its statement timeout is 10s).
-      { name: call, type: 'call', method: 'POST', url: `${dbAccessUrl}/query`, timeout: 15000, inputs: { body: req } },
-      // A skipped query (condition gate) arrives as null and counts as OK so the flow continues.
+      { name: paramsNode, type: 'jq', inputs, jq: wrap(spec.paramsJq) },
+      { name: req, type: 'jq', inputs: { p: paramsNode }, jq: spec.requestJq },
+      { name: call, type: 'call', method: 'POST', url: spec.url, timeout: spec.timeout, inputs: { body: req } },
       { name: ok, type: 'jq', inputs: { r: res }, jq: '.r == null or .r.ok == true' },
       { name: gate, type: 'branch', input: ok, then: [name], else: [errBody, errExit] },
       // Error path first so it is scheduled before anything downstream of the result.
-      {
-        name: errBody, type: 'jq', inputs: { r: res },
-        jq: `{error: "database query failed", node: ${JSON.stringify(d.label)}, message: .r.error, code: .r.code, detail: .r.detail, hint: .r.hint}`,
-      },
-      { name: errExit, type: 'exit', status: d.errorStatus ?? 502, inputs: { body: errBody } },
-      { name, type: 'jq', inputs: { r: res }, jq: 'if .r == null then null else {rows: .r.rows, row_count: .r.rowCount, fields: .r.fields, truncated: .r.truncated} end' },
+      { name: errBody, type: 'jq', inputs: { r: res }, jq: spec.errorJq },
+      { name: errExit, type: 'exit', status: spec.errorStatus, inputs: { body: errBody } },
+      { name, type: 'jq', inputs: { r: res }, jq: `if .r == null then null else (.r | ${spec.resultJq}) end` },
     ];
+  }
+
+  /** Only the connection name travels through Kong; db-access resolves the string from Vault. */
+  function compileDatabase(n: FlowNode & { type: 'database' }, name: string, ins: DataInput[]): DatakitNode[] {
+    const d: DatabaseData = n.data;
+    const params = Object.entries(d.params ?? {}).map(([k, v]) => `${JSON.stringify(k)}: (${v.trim()})`).join(', ');
+    return guardedCall(n, name, ins, {
+      paramsJq: `{${params}}`,
+      requestJq: `{connection: ${JSON.stringify(d.connection)}, sql: ${JSON.stringify(d.sql)}, params: .p}`,
+      // Fail fast if db-access itself is unreachable (its statement timeout is 10s).
+      url: `${dbAccessUrl}/query`, timeout: 15000,
+      resultJq: '{rows: .rows, row_count: .rowCount, fields: .fields, truncated: .truncated}',
+      errorJq: `{error: "database query failed", node: ${JSON.stringify(d.label)}, message: .r.error, code: .r.code, detail: .r.detail, hint: .r.hint}`,
+      errorStatus: d.errorStatus ?? 502,
+    });
+  }
+
+  /** Sends a document through edi-gateway; the partner's protocol (AS2, SFTP, …) decides how. */
+  function compileEdiSend(n: FlowNode & { type: 'edi_send' }, name: string, ins: DataInput[]): DatakitNode[] {
+    const d: EdiSendData = n.data;
+    return guardedCall(n, name, ins, {
+      paramsJq: `{filename: (${d.filename?.trim() || 'null'}), content: (${d.content.trim()})}`,
+      requestJq: `{partner: ${JSON.stringify(d.partner)}, contentType: ${JSON.stringify(d.contentType || '')}, filename: .p.filename, content: .p.content}`,
+      // AS2 waits for a synchronous MDN; allow for slow partners.
+      url: `${ediGatewayUrl}/send`, timeout: 90000,
+      resultJq: '{id: .id, message_id: .messageId, status: .status, receipt: .receipt}',
+      errorJq: `{error: "edi send failed", node: ${JSON.stringify(d.label)}, partner: ${JSON.stringify(d.partner)}, message: .r.error}`,
+      errorStatus: d.errorStatus ?? 502,
+    });
   }
 
   function compileHttp(n: FlowNode & { type: 'http' }, name: string, ins: DataInput[]): DatakitNode[] {

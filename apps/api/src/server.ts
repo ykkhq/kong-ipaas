@@ -30,7 +30,7 @@ const dbAccess = new DbAccessManager({
   env: () => dbAccessEnv(process.env, { ...config.vault, token: readTokenFile(config.vault.dbAccessTokenFile) }),
 });
 const connections = new ConnectionService(db, vault, dbAccess, (m) => app.log.info(m));
-const deployer = new Deployer(db, konnect, gateway, config.syncTimeoutMs, dbAccess, connections);
+const deployer = new Deployer(db, konnect, gateway, config.syncTimeoutMs, dbAccess, connections, config.ediGatewayUrl);
 const app = buildApp({ db, konnect, gateway, deployer, dbAccess, connections, publicGatewayUrl: config.publicGatewayUrl });
 
 await app.listen({ host: '0.0.0.0', port: config.port });

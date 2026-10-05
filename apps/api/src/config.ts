@@ -25,6 +25,8 @@ export const config = {
   /** Base URL of the mock job service as seen from the data plane, used by seed flows. */
   mocksUrl: env.MOCKS_URL ?? 'http://mocks:4010',
   syncTimeoutMs: Number(env.SYNC_TIMEOUT_MS ?? 45000),
+  /** edi-gateway internal API as seen from the data plane (EDI Send nodes). */
+  ediGatewayUrl: env.EDI_GATEWAY_URL ?? 'http://edi-gateway:4100',
   dbAccess: {
     image: env.DB_ACCESS_IMAGE ?? 'ipaas-db-access:latest',
     containerName: env.DB_ACCESS_CONTAINER ?? 'ipaas-db-access',
