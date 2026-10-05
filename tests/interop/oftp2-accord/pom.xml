@@ -1,0 +1,32 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>ipaas.interop</groupId>
+  <artifactId>oftp2-accord</artifactId>
+  <version>1.0</version>
+  <properties>
+    <maven.compiler.source>11</maven.compiler.source>
+    <maven.compiler.target>11</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.neociclo.accord.odetteftp</groupId>
+      <artifactId>oftp-core</artifactId>
+      <version>1.2.0.RC1</version>
+    </dependency>
+    <!-- Accord uses BouncyCastle 1.45 CMS (1.46 breaks Accord: RecipientId became abstract) for EERPs, enveloping and secure authentication -->
+    <dependency><groupId>org.bouncycastle</groupId><artifactId>bcprov-jdk16</artifactId><version>1.45</version></dependency>
+    <dependency><groupId>org.bouncycastle</groupId><artifactId>bcmail-jdk16</artifactId><version>1.45</version></dependency>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-simple</artifactId><version>1.5.8</version></dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.1.0</version>
+        <configuration><mainClass>Harness</mainClass></configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

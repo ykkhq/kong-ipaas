@@ -1,7 +1,7 @@
 import pg from 'pg';
 
 export type Protocol = 'sftp' | 'as2' | 'oftp2' | 'ebms' | 'jx' | 'zengin';
-export const PROTOCOLS: Protocol[] = ['sftp', 'as2'];
+export const PROTOCOLS: Protocol[] = ['sftp', 'as2', 'oftp2', 'ebms'];
 
 export interface PartnerRow {
   id: string;
@@ -16,7 +16,7 @@ export interface PartnerRow {
   updated_at: string;
 }
 
-export type MessageStatus = 'sending' | 'sent' | 'awaiting-receipt' | 'delivered' | 'failed' | 'received' | 'forwarded' | 'forward-failed';
+export type MessageStatus = 'sending' | 'queued' | 'sent' | 'awaiting-receipt' | 'delivered' | 'failed' | 'received' | 'forwarded' | 'forward-failed';
 
 export interface MessageRow {
   id: string;
@@ -80,6 +80,12 @@ export class Db {
         updated_at timestamptz NOT NULL DEFAULT now()
       );
       CREATE INDEX IF NOT EXISTS edi_messages_created ON edi_messages (created_at DESC);
+      CREATE TABLE IF NOT EXISTS edi_oftp_responses (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        partner_id uuid NOT NULL REFERENCES edi_partners (id) ON DELETE CASCADE,
+        cmd jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
       CREATE INDEX IF NOT EXISTS edi_messages_msgid ON edi_messages (protocol, message_id);`);
   }
 
@@ -104,6 +110,25 @@ export class Db {
   }
   async deletePartner(id: string): Promise<void> {
     await this.pool.query('DELETE FROM edi_partners WHERE id = $1', [id]);
+  }
+
+  // ---- OFTP2 end-to-end responses waiting to be sent ----
+  async pendingResponses(partnerId: string): Promise<{ id: string; cmd: Record<string, any> }[]> {
+    return (await this.pool.query('SELECT id, cmd FROM edi_oftp_responses WHERE partner_id = $1 ORDER BY created_at', [partnerId])).rows;
+  }
+  async addResponse(partnerId: string, cmd: Record<string, any>): Promise<void> {
+    await this.pool.query('INSERT INTO edi_oftp_responses (partner_id, cmd) VALUES ($1, $2)', [partnerId, JSON.stringify(cmd)]);
+  }
+  async removeResponse(id: string): Promise<void> {
+    await this.pool.query('DELETE FROM edi_oftp_responses WHERE id = $1', [id]);
+  }
+  async queuedMessages(partnerId: string): Promise<MessageRow[]> {
+    const q = "SELECT * FROM edi_messages WHERE partner_id = $1 AND direction = 'out' AND status = 'queued' ORDER BY created_at";
+    return (await this.pool.query<MessageRow>(q, [partnerId])).rows;
+  }
+  async findByMessageId(partnerId: string, messageId: string): Promise<MessageRow | undefined> {
+    const q = "SELECT * FROM edi_messages WHERE partner_id = $1 AND message_id = $2 AND direction = 'out' ORDER BY created_at DESC LIMIT 1";
+    return (await this.pool.query<MessageRow>(q, [partnerId, messageId])).rows[0];
   }
 
   // ---- station (our own identity per protocol) ----

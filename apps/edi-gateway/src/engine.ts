@@ -12,7 +12,7 @@ export interface OutboundDoc {
 }
 
 export type SendResult =
-  | { ok: true; status: 'sent' | 'delivered' | 'awaiting-receipt'; messageId: string; receipt?: Record<string, any> }
+  | { ok: true; status: 'sent' | 'delivered' | 'awaiting-receipt' | 'queued'; messageId: string; receipt?: Record<string, any> }
   | { ok: false; error: string; messageId?: string; receipt?: Record<string, any> };
 
 export interface InboundDoc {

@@ -62,7 +62,7 @@ export type QueryResult =
   | { ok: false; error: string; code?: string; detail?: string; hint?: string; position?: string };
 
 // ---- EDI (edi-gateway admin API via /api/edi) -------------------------------
-export type EdiProtocol = 'sftp' | 'as2';
+export type EdiProtocol = 'sftp' | 'as2' | 'oftp2' | 'ebms';
 
 export interface EdiPartner {
   id: string;
@@ -96,6 +96,8 @@ export interface EdiMessage {
 export interface EdiStation {
   as2: { as2Id?: string; email?: string; publicUrl?: string; certificate: string | null; certInfo: { subject: string; notAfter: string; fingerprint: string } | null };
   sftp: { port: number; hostKeyFingerprint: string };
+  ebms: { partyId?: string; partyIdType?: string };
+  oftp2: { odetteId?: string; certificate: string | null; certInfo: { subject: string; notAfter: string; fingerprint: string } | null; cipherSuites: Record<string, string> };
 }
 
 export type EdiPartnerInput = Pick<EdiPartner, 'name' | 'protocol' | 'enabled' | 'config' | 'inbound_flow'> & { secrets?: Record<string, string> };
@@ -154,6 +156,9 @@ export const api = {
     station: () => call<EdiStation>('GET', '/edi/station'),
     saveAs2Station: (s: { as2Id: string; email?: string; publicUrl?: string }) => call<{ ok: boolean }>('PUT', '/edi/station/as2', s),
     as2Certificate: (b: { generate?: boolean; certificate?: string; privateKey?: string }) => call<{ ok: boolean }>('POST', '/edi/station/as2/certificate', b),
+    saveEbmsStation: (s: { partyId: string; partyIdType?: string }) => call<{ ok: boolean }>('PUT', '/edi/station/ebms', s),
+    saveOftpStation: (s: { odetteId: string }) => call<{ ok: boolean }>('PUT', '/edi/station/oftp2', s),
+    oftpCertificate: (b: { generate?: boolean; certificate?: string; privateKey?: string }) => call<{ ok: boolean }>('POST', '/edi/station/oftp2/certificate', b),
   },
   dbQuery: (req: { connection: string; sql: string; params?: Record<string, unknown> }) => call<QueryResult>('POST', '/db/query', req),
 };

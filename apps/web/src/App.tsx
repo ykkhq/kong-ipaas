@@ -19,6 +19,6 @@ export function App() {
   const m = route.match(/^\/flows\/([^/]+)$/);
   if (m) return <Designer key={m[1]} flowId={m[1]} />;
   if (route === '/connections') return <ConnectionsPage />;
-  if (route.startsWith('/edi')) return <EdiPage />;
+  if (route.startsWith('/edi')) return <EdiPage key={route} />;
   return <FlowList />;
 }

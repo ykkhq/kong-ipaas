@@ -76,6 +76,22 @@ export function decrypt(der: Buffer, certPem: string, keyPem: string): Promise<B
   });
 }
 
+/** Opaque (encapsulated) CMS SignedData, e.g. OFTP2 signed files and EERPs. */
+export function signOpaque(data: Buffer, certPem: string, keyPem: string, digest = 'sha256'): Promise<Buffer> {
+  return withTemp({ data, cert: certPem, key: keyPem }, async (p) => {
+    await openssl(['cms', '-sign', '-binary', '-nodetach', '-nocerts', '-in', p('data'), '-signer', p('cert'), '-inkey', p('key'), '-md', digest, '-outform', 'DER', '-out', p('sig')]);
+    return readFile(p('sig'));
+  });
+}
+
+/** Verifies opaque SignedData against the partner certificate and returns the content. */
+export function verifyOpaque(der: Buffer, partnerCertPem: string): Promise<Buffer> {
+  return withTemp({ sig: der, cert: partnerCertPem }, async (p) => {
+    await openssl(['cms', '-verify', '-binary', '-inform', 'DER', '-in', p('sig'), '-certfile', p('cert'), '-nointern', '-noverify', '-out', p('out')]);
+    return readFile(p('out'));
+  });
+}
+
 /** Self-signed RSA certificate for our AS2 station. */
 export function selfSigned(commonName: string, days = 3650): Promise<{ certificate: string; privateKey: string }> {
   return withTemp({}, async (p) => {

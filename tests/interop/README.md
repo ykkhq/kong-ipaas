@@ -25,3 +25,29 @@ It then creates a temporary partner `pyas2` and checks 11 cases:
   `docker run -d --name sftp-peer --network ipaas_default atmoz/sftp peer:secret:1001:1001:upload,download,archive`.
   Create a remote partner (`host: sftp-peer`, `uploadDir: /upload`, `pollDir: /download`, `archiveDir: /archive`).
   **Test** shows the host key to pin, **Send…** uploads, and **Poll now** downloads and archives.
+
+## OFTP2: Neociclo Accord
+
+```sh
+tests/interop/oftp2-accord/run.sh
+```
+
+This builds a Java harness on Accord `oftp-core` 1.2.0.RC1 (with BouncyCastle 1.45) and generates throwaway keys.
+It then runs 14 checks:
+
+- **Plain session, we call Accord:** files cross in both directions, each acknowledged with an EERP.
+- **Secure session, we call Accord:** mutual secure authentication, sign + zlib + AES-256 (suite 02) in both directions, and signed EERPs verified by both sides (signature and hash).
+- **Accord calls us (wait mode):** our queued file is picked up, using 3DES (suite 01) and the same security checks.
+
+## ebXML MS 2.0: Clockwork ebms-admin
+
+```sh
+tests/interop/ebms-clockwork/run.sh
+```
+
+This starts Clockwork `ebms-admin` 2.20.10 (embedded, in-memory H2) and inserts Clockwork's own CPA test fixture, with reliable messaging, HTTP, unsigned and sync.
+It then runs 7 checks:
+
+- **We send:** we get a sync Acknowledgment, and Clockwork stores the message with the payload and action intact.
+- **Clockwork sends:** the message is received, and Clockwork accepts our Acknowledgment (no retransmission).
+- **Status and ping:** a StatusRequest gets our StatusResponse, and a Ping gets our Pong.

@@ -18,6 +18,14 @@ export const config = {
     publicUrl: env.AS2_PUBLIC_URL ?? 'http://localhost:4080/as2',
     httpTimeoutMs: Number(env.AS2_TIMEOUT_MS ?? 60000),
   },
+  ebms: {
+    port: Number(env.EBMS_PORT ?? 4090),
+    timeoutMs: Number(env.EBMS_TIMEOUT_MS ?? 60000),
+  },
+  oftp2: {
+    port: Number(env.OFTP_PORT ?? 3305),
+    tlsPort: Number(env.OFTP_TLS_PORT ?? 6619),
+  },
   sftp: {
     port: Number(env.SFTP_PORT ?? 2222),
     pollIntervalMs: Number(env.SFTP_POLL_MS ?? 30000),

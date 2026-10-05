@@ -6,11 +6,15 @@ import type { Vault } from './vault';
 import type { As2Adapter } from './protocols/as2/adapter';
 import { certInfo, selfSigned } from './protocols/as2/cms';
 import type { SftpAdapter } from './protocols/sftp/adapter';
+import type { Oftp2Adapter } from './protocols/oftp2/adapter';
+import { CIPHER_SUITES } from './protocols/oftp2/files';
 
 /** Secret fields per protocol; values go to Vault, only "is set" flags come back. */
 const SECRET_FIELDS: Record<string, string[]> = {
   sftp: ['password', 'privateKey', 'passphrase'],
   as2: ['password'],
+  oftp2: ['sendPassword', 'receivePassword'],
+  ebms: ['password'],
 };
 
 interface Deps {
@@ -20,6 +24,7 @@ interface Deps {
   store: PayloadStore;
   as2: As2Adapter;
   sftp: SftpAdapter;
+  oftp2: Oftp2Adapter;
   sftpPort: number;
 }
 
@@ -59,7 +64,46 @@ export function buildAdmin(d: Deps): FastifyInstance {
     return {
       as2: { ...as2, certificate: sec?.certificate ?? null, certInfo: sec?.certificate ? await certInfo(sec.certificate).catch(() => null) : null },
       sftp: { port: d.sftpPort, hostKeyFingerprint: await d.sftp.hostKeyFingerprint() },
+      ebms: await d.db.getStation('ebms'),
+      oftp2: await (async () => {
+        const cfg = await d.db.getStation('oftp2');
+        const sec = await d.vault.get<{ certificate?: string }>('station/oftp2');
+        return {
+          ...cfg, certificate: sec?.certificate ?? null, certInfo: sec?.certificate ? await certInfo(sec.certificate).catch(() => null) : null,
+          cipherSuites: Object.fromEntries(Object.entries(CIPHER_SUITES).map(([k, v]) => [k, v.label])),
+        };
+      })(),
     };
+  });
+
+  app.put<{ Body: { partyId: string; partyIdType?: string } }>('/station/ebms', async (req) => {
+    const { partyId, partyIdType } = req.body ?? ({} as any);
+    if (!partyId) throw Object.assign(new Error('partyId is required'), { statusCode: 400 });
+    await d.db.setStation('ebms', { partyId, partyIdType: partyIdType || undefined });
+    return { ok: true };
+  });
+
+  app.put<{ Body: { odetteId: string } }>('/station/oftp2', async (req) => {
+    const id = String(req.body?.odetteId ?? '').toUpperCase();
+    if (!/^[A-Z0-9 /\-.&()]{1,25}$/.test(id)) throw Object.assign(new Error('odetteId: 1-25 of A-Z 0-9 / - . & ( )'), { statusCode: 400 });
+    await d.db.setStation('oftp2', { ...(await d.db.getStation('oftp2')), odetteId: id });
+    return { ok: true };
+  });
+
+  app.post<{ Body: { generate?: boolean; certificate?: string; privateKey?: string } }>('/station/oftp2/certificate', async (req) => {
+    const st = await d.db.getStation('oftp2');
+    if (req.body?.generate) {
+      if (!st.odetteId) throw Object.assign(new Error('Set the ODETTE ID first'), { statusCode: 400 });
+      await d.vault.merge('station/oftp2', await selfSigned(st.odetteId));
+    } else {
+      const { certificate, privateKey } = req.body ?? {};
+      if (!certificate?.includes('BEGIN CERTIFICATE') || !privateKey?.includes('PRIVATE KEY')) {
+        throw Object.assign(new Error('certificate and privateKey (PEM) are required'), { statusCode: 400 });
+      }
+      await d.vault.merge('station/oftp2', { certificate, privateKey });
+    }
+    await d.oftp2.reload(); // the TLS listener uses the station certificate
+    return { ok: true };
   });
 
   app.put<{ Body: { as2Id: string; email?: string; publicUrl?: string } }>('/station/as2', async (req) => {
@@ -128,6 +172,11 @@ export function buildAdmin(d: Deps): FastifyInstance {
     const p = await d.db.getPartner(req.params.id);
     if (!p) return reply.code(404).send({ error: 'Partner not found' });
     if (p.protocol === 'sftp') return d.sftp.test(p);
+    if (p.protocol === 'oftp2') {
+      if ((p.config.mode ?? 'call') !== 'call') return { ok: false, error: 'Partner is in wait mode (it calls us)' };
+      const r = await d.oftp2.call(p);
+      return { ok: r.ok, error: r.error, received: r.received, sent: r.sent, responses: r.responses, trace: r.trace.join(' ') };
+    }
     if (p.protocol === 'as2') {
       if (!p.config.url) return { ok: false, error: 'No URL configured' };
       try {
@@ -142,7 +191,11 @@ export function buildAdmin(d: Deps): FastifyInstance {
 
   app.post<{ Params: { id: string } }>('/partners/:id/poll', async (req, reply) => {
     const p = await d.db.getPartner(req.params.id);
-    if (!p || p.protocol !== 'sftp' || p.config.mode !== 'remote' || !p.config.pollDir) return reply.code(400).send({ error: 'Not a polling SFTP partner' });
+    if (p?.protocol === 'oftp2' && (p.config.mode ?? 'call') === 'call') {
+      const r = await d.oftp2.call(p);
+      return r.ok ? { ok: true, received: r.received, sent: r.sent, responses: r.responses } : { ok: false, error: r.error };
+    }
+    if (!p || p.protocol !== 'sftp' || p.config.mode !== 'remote' || !p.config.pollDir) return reply.code(400).send({ error: 'Not a polling partner' });
     try {
       return { ok: true, received: await d.sftp.pollOne(p) };
     } catch (e) {

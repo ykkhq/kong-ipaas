@@ -51,6 +51,10 @@ export function EdiSendFields({ data, inputs, onChange }: { data: EdiSendData; i
 
 function describe(p: EdiPartner): string {
   const c = p.config;
+  if (p.protocol === 'ebms') return `ebXML MS to ${c.partyId} at ${c.url}: ${c.service} / ${c.action}${c.ackRequested === false ? '' : `, ${c.syncReply === false ? 'async' : 'sync'} acknowledgment`}.`;
+  if (p.protocol === 'oftp2') return c.mode === 'wait'
+    ? `OFTP2: queued until ${c.odetteId} calls us.`
+    : `OFTP2 session to ${c.odetteId} at ${c.host}:${c.port || (c.tls ? 6619 : 3305)}${c.tls ? ' (TLS)' : ''}${c.encrypt ? `, suite ${c.cipherSuite || '02'}` : ''}.`;
   if (p.protocol === 'as2') return `AS2 to ${c.as2Id} at ${c.url}${c.sign ? `, signed ${c.sign}` : ''}${c.encrypt ? `, encrypted ${c.encrypt}` : ''}, MDN ${c.mdn ?? 'sync'}.`;
   return c.mode === 'hosted' ? `SFTP: dropped in ${p.name}'s /outbox on our server.` : `SFTP upload to ${c.username}@${c.host}:${c.uploadDir || '.'}.`;
 }
