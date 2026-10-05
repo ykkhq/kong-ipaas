@@ -1,0 +1,159 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`compileFlow > compiles the seeded examples > customer-360 1`] = `
+{
+  "debug": true,
+  "nodes": [
+    {
+      "inputs": {
+        "req__headers": "request.headers",
+        "req__query": "request.query",
+      },
+      "jq": "(. as $in | ($in | with_entries(select(.key | test("__(query|headers|body)$") | not))) + {req: {query: .req__query, headers: .req__headers}}) | ("http://mocks:4010/users/" + ((.req.query.id // "1") | tostring | @uri))",
+      "name": "GET_USER__URL",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "url": "GET_USER__URL",
+      },
+      "method": "GET",
+      "name": "GET_USER",
+      "type": "call",
+      "url": "http://mocks:4010/users/_",
+    },
+    {
+      "inputs": {
+        "req__headers": "request.headers",
+        "req__query": "request.query",
+      },
+      "jq": "(. as $in | ($in | with_entries(select(.key | test("__(query|headers|body)$") | not))) + {req: {query: .req__query, headers: .req__headers}}) | ("http://mocks:4010/users/" + ((.req.query.id // "1") | tostring | @uri) + "/orders")",
+      "name": "GET_ORDERS__URL",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "url": "GET_ORDERS__URL",
+      },
+      "method": "GET",
+      "name": "GET_ORDERS",
+      "type": "call",
+      "url": "http://mocks:4010/users/_/orders",
+    },
+    {
+      "inputs": {
+        "user": "GET_USER.body",
+      },
+      "jq": "({city: .user.city})",
+      "name": "GET_WEATHER__QUERY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "query": "GET_WEATHER__QUERY",
+      },
+      "method": "GET",
+      "name": "GET_WEATHER",
+      "type": "call",
+      "url": "http://mocks:4010/weather",
+    },
+    {
+      "inputs": {
+        "user": "GET_USER.body",
+      },
+      "jq": "(.user.tier == "gold") | (. != false and . != null)",
+      "name": "IS_GOLD",
+      "type": "jq",
+    },
+    {
+      "input": "IS_GOLD",
+      "name": "IS_GOLD__BRANCH",
+      "then": [
+        "GET_LOYALTY",
+        "GET_LOYALTY__URL",
+      ],
+      "type": "branch",
+    },
+    {
+      "inputs": {
+        "user": "GET_USER.body",
+      },
+      "jq": "("http://mocks:4010/loyalty/" + ((.user.tier) | tostring | @uri))",
+      "name": "GET_LOYALTY__URL",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "url": "GET_LOYALTY__URL",
+      },
+      "method": "GET",
+      "name": "GET_LOYALTY",
+      "type": "call",
+      "url": "http://mocks:4010/loyalty/_",
+    },
+    {
+      "inputs": {
+        "loyalty": "GET_LOYALTY.body",
+        "orders": "GET_ORDERS.body",
+        "user": "GET_USER.body",
+        "weather": "GET_WEATHER.body",
+      },
+      "jq": "({customer: .user, orders: .orders.orders, order_count: .orders.count, weather: .weather, loyalty: (.loyalty // {discount_pct: 0})})",
+      "name": "RESPONSE__BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "RESPONSE__BODY",
+      },
+      "name": "RESPONSE",
+      "status": 200,
+      "type": "exit",
+    },
+  ],
+}
+`;
+
+exports[`compileFlow > compiles the seeded examples > inventory 1`] = `
+{
+  "debug": true,
+  "nodes": [
+    {
+      "method": "GET",
+      "name": "FETCH_INVENTORY",
+      "type": "call",
+      "url": "http://mocks:4010/inventory",
+    },
+    {
+      "attributes_name_prefix": "@",
+      "input": "FETCH_INVENTORY.body",
+      "name": "PARSE_XML",
+      "type": "xml_to_json",
+    },
+    {
+      "inputs": {
+        "inv": "PARSE_XML",
+      },
+      "jq": "(.inv | [.. | objects | select(has("sku"))] | map(select((.qty | tonumber) > 0)))",
+      "name": "IN_STOCK",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "in_stock": "IN_STOCK",
+      },
+      "jq": "({in_stock: .in_stock})",
+      "name": "RESPONSE__BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "RESPONSE__BODY",
+      },
+      "name": "RESPONSE",
+      "status": 200,
+      "type": "exit",
+    },
+  ],
+}
+`;

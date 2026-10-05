@@ -1,0 +1,118 @@
+name: ipaas
+
+services:
+  # One-shot: finds/creates the Konnect control plane, pins a DP certificate,
+  # and writes cluster endpoints for kong-dp into the dp-certs volume.
+  konnect-init:
+    build: infra/konnect-init
+    env_file: .env
+    environment:
+      OUT: /certs
+    secrets:
+      - konnect_pat
+    volumes:
+      - dp-certs:/certs
+    restart: "no"
+
+  # Local Kong data plane connected to Konnect. Runs the DataKit flows.
+  kong-dp:
+    image: kong/kong-gateway:${KONG_VERSION:-3.16}
+    depends_on:
+      konnect-init:
+        condition: service_completed_successfully
+    entrypoint: ["/ipaas-entrypoint.sh"]
+    env_file:
+      # Job secrets referenced by Secret nodes (IPAAS_SECRET_*). Optional.
+      - path: secrets.env
+        required: false
+    environment:
+      KONG_ROLE: data_plane
+      KONG_DATABASE: "off"
+      KONG_KONNECT_MODE: "on"
+      KONG_VITALS: "off"
+      KONG_CLUSTER_MTLS: pki
+      KONG_CLUSTER_CERT: /certs/tls.crt
+      KONG_CLUSTER_CERT_KEY: /certs/tls.key
+      KONG_LUA_SSL_TRUSTED_CERTIFICATE: system
+      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl"
+      KONG_STATUS_LISTEN: "0.0.0.0:8100"
+      KONG_NGINX_WORKER_PROCESSES: "2"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+    volumes:
+      - dp-certs:/certs:ro
+      - ./infra/kong-dp/entrypoint.sh:/ipaas-entrypoint.sh:ro
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+      - "${GATEWAY_TLS_PORT:-8443}:8443"
+      - "${GATEWAY_STATUS_PORT:-8100}:8100"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ipaas
+      POSTGRES_PASSWORD: ipaas
+      POSTGRES_DB: ipaas
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ipaas"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Flow CRUD, DataKit compiler, Konnect deployer, test-run proxy.
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://ipaas:ipaas@postgres:5432/ipaas
+      DP_PROXY_URL: http://kong-dp:8000
+      DP_STATUS_URL: http://kong-dp:8100
+      MOCKS_URL: http://mocks:4010
+    secrets:
+      - konnect_pat
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Flow designer UI (nginx serves the SPA and proxies /api).
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    restart: unless-stopped
+
+  # Sample job APIs used by the example flows.
+  mocks:
+    build:
+      context: .
+      dockerfile: apps/mocks/Dockerfile
+    environment:
+      MOCK_DELAY_MS: ${MOCK_DELAY_MS:-300}
+    ports:
+      - "${MOCKS_PORT:-4010}:4010"
+    restart: unless-stopped
+
+volumes:
+  dp-certs:
+  pgdata:
+
+secrets:
+  # Konnect token, read from a file so it never lands in .env or the image.
+  konnect_pat:
+    file: ${KONNECT_PAT_FILE:-${HOME}/.kong/kpat}
