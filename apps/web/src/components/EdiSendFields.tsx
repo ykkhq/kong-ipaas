@@ -51,6 +51,9 @@ export function EdiSendFields({ data, inputs, onChange }: { data: EdiSendData; i
 
 function describe(p: EdiPartner): string {
   const c = p.config;
+  if (p.protocol === 'jx') return c.mode === 'client'
+    ? `JX PutDocument to ${c.jxId} at ${c.url} (${c.formatType}/${c.documentType}${c.compressType ? `, ${c.compressType}` : ''}).`
+    : `JX: queued on our server until ${c.jxId} fetches it with GetDocument (${c.formatType}/${c.documentType}).`;
   if (p.protocol === 'ebms') return `ebXML MS to ${c.partyId} at ${c.url}: ${c.service} / ${c.action}${c.ackRequested === false ? '' : `, ${c.syncReply === false ? 'async' : 'sync'} acknowledgment`}.`;
   if (p.protocol === 'oftp2') return c.mode === 'wait'
     ? `OFTP2: queued until ${c.odetteId} calls us.`

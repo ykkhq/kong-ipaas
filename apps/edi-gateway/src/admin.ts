@@ -7,6 +7,7 @@ import type { As2Adapter } from './protocols/as2/adapter';
 import { certInfo, selfSigned } from './protocols/as2/cms';
 import type { SftpAdapter } from './protocols/sftp/adapter';
 import type { Oftp2Adapter } from './protocols/oftp2/adapter';
+import type { JxAdapter } from './protocols/jx/adapter';
 import { CIPHER_SUITES } from './protocols/oftp2/files';
 
 /** Secret fields per protocol; values go to Vault, only "is set" flags come back. */
@@ -15,6 +16,7 @@ const SECRET_FIELDS: Record<string, string[]> = {
   as2: ['password'],
   oftp2: ['sendPassword', 'receivePassword'],
   ebms: ['password'],
+  jx: ['password'],
 };
 
 interface Deps {
@@ -25,6 +27,7 @@ interface Deps {
   as2: As2Adapter;
   sftp: SftpAdapter;
   oftp2: Oftp2Adapter;
+  jx: JxAdapter;
   sftpPort: number;
 }
 
@@ -65,6 +68,7 @@ export function buildAdmin(d: Deps): FastifyInstance {
       as2: { ...as2, certificate: sec?.certificate ?? null, certInfo: sec?.certificate ? await certInfo(sec.certificate).catch(() => null) : null },
       sftp: { port: d.sftpPort, hostKeyFingerprint: await d.sftp.hostKeyFingerprint() },
       ebms: await d.db.getStation('ebms'),
+      jx: await d.db.getStation('jx'),
       oftp2: await (async () => {
         const cfg = await d.db.getStation('oftp2');
         const sec = await d.vault.get<{ certificate?: string }>('station/oftp2');
@@ -74,6 +78,14 @@ export function buildAdmin(d: Deps): FastifyInstance {
         };
       })(),
     };
+  });
+
+  app.put<{ Body: { jxId: string; domain?: string } }>('/station/jx', async (req) => {
+    const { jxId, domain } = req.body ?? ({} as any);
+    if (!jxId) throw Object.assign(new Error('jxId is required'), { statusCode: 400 });
+    if (domain && !/^[A-Za-z0-9.-]+$/.test(domain)) throw Object.assign(new Error('domain must be a host name'), { statusCode: 400 });
+    await d.db.setStation('jx', { jxId, domain: domain || undefined });
+    return { ok: true };
   });
 
   app.put<{ Body: { partyId: string; partyIdType?: string } }>('/station/ebms', async (req) => {
@@ -191,6 +203,14 @@ export function buildAdmin(d: Deps): FastifyInstance {
 
   app.post<{ Params: { id: string } }>('/partners/:id/poll', async (req, reply) => {
     const p = await d.db.getPartner(req.params.id);
+    if (p?.protocol === 'jx' && p.config.mode === 'client') {
+      try {
+        const r = await d.jx.poll(p);
+        return { ok: true, received: r.received, duplicates: r.duplicates };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    }
     if (p?.protocol === 'oftp2' && (p.config.mode ?? 'call') === 'call') {
       const r = await d.oftp2.call(p);
       return r.ok ? { ok: true, received: r.received, sent: r.sent, responses: r.responses } : { ok: false, error: r.error };

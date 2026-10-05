@@ -1,7 +1,7 @@
 import pg from 'pg';
 
-export type Protocol = 'sftp' | 'as2' | 'oftp2' | 'ebms' | 'jx' | 'zengin';
-export const PROTOCOLS: Protocol[] = ['sftp', 'as2', 'oftp2', 'ebms'];
+export type Protocol = 'sftp' | 'as2' | 'oftp2' | 'ebms' | 'jx';
+export const PROTOCOLS: Protocol[] = ['sftp', 'as2', 'oftp2', 'ebms', 'jx'];
 
 export interface PartnerRow {
   id: string;

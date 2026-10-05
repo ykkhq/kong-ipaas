@@ -1,0 +1,30 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>ipaas.interop</groupId>
+  <artifactId>jx-server</artifactId>
+  <version>1.0</version>
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <dependencies>
+    <dependency><groupId>com.sun.xml.ws</groupId><artifactId>jaxws-rt</artifactId><version>4.0.3</version></dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <!-- Server stubs generated from the official JX 2007 WSDL (namespace hyphen restored). -->
+      <plugin>
+        <groupId>com.sun.xml.ws</groupId>
+        <artifactId>jaxws-maven-plugin</artifactId>
+        <version>4.0.3</version>
+        <executions><execution><goals><goal>wsimport</goal></goals></execution></executions>
+        <configuration>
+          <wsdlDirectory>${project.basedir}/src/main/resources</wsdlDirectory>
+          <wsdlFiles><wsdlFile>jx2007.wsdl</wsdlFile></wsdlFiles>
+          <packageName>jx.gen</packageName>
+          <xnocompile>false</xnocompile>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

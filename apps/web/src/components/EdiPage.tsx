@@ -117,8 +117,8 @@ function Partners() {
                 <td className="actions">
                   <button onClick={() => setSending(p)}>Send…</button>
                   {(p.protocol === 'as2' || (p.protocol === 'sftp' && p.config.mode === 'remote')) && <button className="ghost" onClick={() => act(p, 'test')}>Test</button>}
-                  {((p.protocol === 'sftp' && p.config.mode === 'remote' && p.config.pollDir) || (p.protocol === 'oftp2' && p.config.mode !== 'wait')) && (
-                    <button className="ghost" onClick={() => act(p, 'poll')}>{p.protocol === 'oftp2' ? 'Call now' : 'Poll now'}</button>
+                  {((p.protocol === 'sftp' && p.config.mode === 'remote' && p.config.pollDir) || (p.protocol === 'oftp2' && p.config.mode !== 'wait') || (p.protocol === 'jx' && p.config.mode === 'client')) && (
+                    <button className="ghost" onClick={() => act(p, 'poll')}>{p.protocol === 'oftp2' ? 'Call now' : p.protocol === 'jx' ? 'GetDocument now' : 'Poll now'}</button>
                   )}
                   <button className="ghost" onClick={() => setEditing(p)}>Edit</button>
                   <button className="ghost danger" onClick={() => act(p, 'delete')}>Delete</button>
@@ -134,6 +134,9 @@ function Partners() {
 
 function summary(p: EdiPartner, st: EdiStation | null): string {
   const c = p.config;
+  if (p.protocol === 'jx') {
+    return `${c.jxId} · ${c.mode === 'client' ? `we call ${c.url}${c.pollIntervalSec ? `, poll every ${c.pollIntervalSec}s` : ''}` : 'calls our JX server'} · ${c.formatType}/${c.documentType}${c.compressType ? ` · ${c.compressType.replace('application/', '')}` : ''}`;
+  }
   if (p.protocol === 'ebms') {
     return `${c.partyId} · ${c.url} · ${c.service}/${c.action}${c.ackRequested === false ? ' · no ack' : ` · ${c.syncReply === false ? 'async' : 'sync'} ack, ${c.retries ?? 3} retries`}`;
   }
@@ -150,6 +153,9 @@ const AS2_DEFAULT = { as2Id: '', url: '', certificate: '', sign: 'sha-256', encr
 const OFTP_DEFAULT = {
   odetteId: '', mode: 'call', host: '', port: 3305, tls: false, sdeb: 4096, credit: 64, cipherSuite: '02',
   secureAuth: false, sign: false, compress: false, encrypt: false, signedEerp: false, requireSigned: false, requireEncrypted: false, certificate: '', pollIntervalSec: 0,
+};
+const JX_DEFAULT = {
+  mode: 'server', jxId: '', url: '', formatType: 'SecondGenEDI', documentType: '', compressType: '', username: '', pollIntervalSec: 0, getFormatType: '', getDocumentType: '',
 };
 const EBMS_DEFAULT = {
   partyId: '', partyIdType: '', url: '', cpaId: '', service: '', serviceType: '', action: '', fromRole: '', toRole: '',
@@ -173,7 +179,7 @@ function PartnerForm({ partner, flows, station, onCancel, onSaved }: {
 
   const switchProtocol = (p: EdiProtocol) => {
     setProtocol(p);
-    setCfg(p === 'as2' ? AS2_DEFAULT : p === 'oftp2' ? OFTP_DEFAULT : p === 'ebms' ? EBMS_DEFAULT : SFTP_DEFAULT);
+    setCfg(p === 'as2' ? AS2_DEFAULT : p === 'oftp2' ? OFTP_DEFAULT : p === 'ebms' ? EBMS_DEFAULT : p === 'jx' ? JX_DEFAULT : SFTP_DEFAULT);
   };
 
   const save = async () => {
@@ -226,6 +232,7 @@ function PartnerForm({ partner, flows, station, onCancel, onSaved }: {
             <option value="as2">EDIINT AS2</option>
             <option value="oftp2">OFTP2 (ODETTE FTP 2.0)</option>
             <option value="ebms">ebXML MS 2.0</option>
+            <option value="jx">JX手順</option>
             <option value="sftp">SFTP</option>
           </select>
         </label>
@@ -275,6 +282,51 @@ function PartnerForm({ partner, flows, station, onCancel, onSaved }: {
             {secretInput('password', 'HTTP basic auth password')}
           </div>
           <p className="muted small">Give the partner our AS2 ID <code>{station?.as2.as2Id ?? '(set on Our station)'}</code>, our certificate, and the URL <code>{station?.as2.publicUrl ?? 'http://<this host>:4080/as2'}</code>.</p>
+        </>
+      )}
+
+      {protocol === 'jx' && (
+        <>
+          <div className="grid3">
+            <label className="field"><span>Mode</span>
+              <select value={cfg.mode ?? 'server'} onChange={(e) => set({ mode: e.target.value })}>
+                <option value="server">Server: the partner is a JX client of our hub</option>
+                <option value="client">Client: we call the partner's JX server</option>
+              </select>
+            </label>
+            {text('jxId', 'Partner id (senderId / receiverId)', '4912345000019', 'Also used as MessageHeader From/To')}
+            <label className="field"><span>Compression (compressType)</span>
+              <select value={cfg.compressType ?? ''} onChange={(e) => set({ compressType: e.target.value })}>
+                <option value="">none</option><option value="application/zip">ZIP (application/zip)</option><option value="application/gzip">GZIP (application/gzip)</option>
+              </select>
+            </label>
+          </div>
+          <div className="grid3">
+            {text('formatType', 'formatType (outbound)', 'SecondGenEDI')}
+            {text('documentType', 'documentType (outbound)', 'Order')}
+            {text('username', cfg.mode === 'client' ? 'Basic auth user (ours)' : 'Basic auth user the partner logs in with')}
+          </div>
+          {secretInput('password', cfg.mode === 'client' ? 'Basic auth password (ours)' : 'Password the partner must send')}
+          {cfg.mode === 'client' ? (
+            <div className="grid3">
+              {text('url', "Partner's JX server URL", 'https://jx.partner.example/JXMSTransfer')}
+              {text('pollIntervalSec', 'GetDocument every N seconds (0 = manual)', '300')}
+              <div className="row">
+                {text('getFormatType', 'Only fetch formatType (2007)', '')}
+                {text('getDocumentType', 'documentType', '')}
+              </div>
+            </div>
+          ) : (
+            <label className="field"><span>Accepted formatType/documentType (one per line, empty = any)</span>
+              <textarea className="mono" rows={2} value={(cfg.acceptedTypes ?? []).join('\n')} placeholder="SecondGenEDI/Order"
+                onChange={(e) => set({ acceptedTypes: e.target.value.split('\n').map((x) => x.trim()).filter(Boolean) })} />
+            </label>
+          )}
+          <p className="muted small">
+            {cfg.mode === 'client'
+              ? 'Sends with PutDocument (a duplicate messageId counts as delivered) and receives with GetDocument followed by ConfirmDocument.'
+              : <>The partner calls <code>http://&lt;this host&gt;:4095/jx</code> with HTTP Basic auth. Its PutDocument goes to the inbound flow. Our sends wait until it calls GetDocument, and become <b>delivered</b> on ConfirmDocument.</>}
+          </p>
         </>
       )}
 
@@ -536,6 +588,14 @@ function receiptSummary(m: EdiMessage): string {
     return flags || 'plain';
   }
   if (m.protocol === 'sftp') return r.path ?? m.message_id ?? '';
+  if (m.protocol === 'jx') {
+    const t = `${r.formatType ?? ''}/${r.documentType ?? ''}${r.compressType ? ` · ${String(r.compressType).replace('application/', '')}` : ''}`;
+    if (m.direction === 'out') {
+      if (r.mode === 'client') return `PutDocument ${r.duplicate ? '(duplicate, already on server)' : 'accepted'} · ${t}`;
+      return r.confirmedAt ? `ConfirmDocument received · ${t}` : r.fetchedAt ? `fetched ${r.fetches}×, waiting for ConfirmDocument` : `waiting for GetDocument · ${t}`;
+    }
+    return `${r.senderId ?? ''} → ${r.receiverId ?? ''} · ${t}`;
+  }
   if (m.protocol === 'ebms') {
     if (m.direction === 'out') {
       if (r.errors?.length) return `ErrorList: ${r.errors.map((e: any) => e.code).join(', ')}`;
@@ -625,6 +685,7 @@ function Station() {
       </div>
       <OftpStation st={st} run={run} />
       <EbmsStation st={st} run={run} />
+      <JxStation st={st} run={run} />
       <div className="card">
         <h3>SFTP server (hosted partners)</h3>
         <div className="small">Port <code>{st.sftp.port}</code> · host key <code className="select">{st.sftp.hostKeyFingerprint}</code></div>
@@ -676,6 +737,22 @@ function EbmsStation({ st, run }: { st: EdiStation; run: (fn: () => Promise<unkn
         <button style={{ alignSelf: 'end', marginBottom: 10 }} disabled={!partyId} onClick={() => run(() => api.edi.saveEbmsStation({ partyId, partyIdType }), 'ebMS station saved')}>Save</button>
       </div>
       <p className="muted small">Endpoint <code>http://&lt;this host&gt;:4090/ebms</code>. Put TLS in front of it for real partners.</p>
+    </div>
+  );
+}
+
+function JxStation({ st, run }: { st: EdiStation; run: (fn: () => Promise<unknown>, ok: string) => Promise<void> }) {
+  const [jxId, setJxId] = useState(st.jx.jxId ?? '');
+  const [domain, setDomain] = useState(st.jx.domain ?? '');
+  return (
+    <div className="card">
+      <h3>JX手順 station</h3>
+      <div className="grid3">
+        <label className="field"><span>Our id (senderId / receiverId)</span><input className="mono" value={jxId} onChange={(e) => setJxId(e.target.value)} placeholder="4912345000002" /></label>
+        <label className="field"><span>Domain for messageIds (unique@domain)</span><input className="mono" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="edi.example.jp" /></label>
+        <button style={{ alignSelf: 'end', marginBottom: 10 }} disabled={!jxId} onClick={() => run(() => api.edi.saveJxStation({ jxId, domain }), 'JX station saved')}>Save</button>
+      </div>
+      <p className="muted small">JX server endpoint <code>http://&lt;this host&gt;:4095/jx</code> (SOAP 1.1, 2004 and 2007 WSDL). Put HTTPS in front of it for real partners.</p>
     </div>
   );
 }

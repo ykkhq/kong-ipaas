@@ -18,6 +18,10 @@ export const config = {
     publicUrl: env.AS2_PUBLIC_URL ?? 'http://localhost:4080/as2',
     httpTimeoutMs: Number(env.AS2_TIMEOUT_MS ?? 60000),
   },
+  jx: {
+    port: Number(env.JX_PORT ?? 4095),
+    timeoutMs: Number(env.JX_TIMEOUT_MS ?? 60000),
+  },
   ebms: {
     port: Number(env.EBMS_PORT ?? 4090),
     timeoutMs: Number(env.EBMS_TIMEOUT_MS ?? 60000),

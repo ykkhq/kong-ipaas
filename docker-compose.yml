@@ -129,7 +129,7 @@ services:
     restart: unless-stopped
 
   # EDI protocols: partners, listeners, message log. Admin API on 4100 (UI via nginx
-  # /api/edi/, flows via /send); AS2 on 4080; SFTP on 2222; OFTP2 on 3305 (TLS 6619); ebXML MS on 4090.
+  # /api/edi/, flows via /send); AS2 on 4080; SFTP on 2222; OFTP2 on 3305 (TLS 6619); ebXML MS on 4090; JX手順 server on 4095.
   edi-gateway:
     build:
       context: .
@@ -149,6 +149,7 @@ services:
       - "${OFTP_PORT:-3305}:3305"
       - "${OFTP_TLS_PORT:-6619}:6619"
       - "${EBMS_PORT:-4090}:4090"
+      - "${JX_PORT:-4095}:4095"
     depends_on:
       postgres:
         condition: service_healthy

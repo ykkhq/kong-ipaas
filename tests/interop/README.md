@@ -51,3 +51,15 @@ It then runs 7 checks:
 - **We send:** we get a sync Acknowledgment, and Clockwork stores the message with the payload and action intact.
 - **Clockwork sends:** the message is received, and Clockwork accepts our Acknowledgment (no retransmission).
 - **Status and ping:** a StatusRequest gets our StatusResponse, and a Ping gets our Pong.
+
+## JX手順
+
+```sh
+tests/interop/jx/run.sh
+```
+
+- **A, our server (11 checks).** [jx_client](https://github.com/Narazaka/jx_client) (Ruby/Savon, the 2007 WSDL) acts as the client.
+  - Checks: PutDocument and its duplicate, GetDocument with and without the 2007 type filter, gzip and zip, ConfirmDocument and its repeat, "nothing left", and a wrong password.
+  - jx_client puts the header fields directly under `soap:Header`, and uses a namespace without the hyphen (`jedicosxml`, copied from the PDF's line wrap). Our server accepts both.
+- **B, our client (12 checks).** The server is a JAX-WS RI server generated with `wsimport` from the official 2007 WSDL (`server/src/main/resources/jx2007.wsdl`, with the PDF artifacts removed). Namespaces are strict.
+  - Checks: our MessageHeader, SOAPAction and elements, zip and gzip, filtered and unfiltered GetDocument followed by ConfirmDocument, and a SOAP Fault on wrong credentials.
