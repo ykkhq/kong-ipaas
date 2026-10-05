@@ -1,6 +1,6 @@
 /** Talks to the local data plane: config-hash polling and flow invocation. */
 export class Gateway {
-  constructor(private proxyUrl: string, private statusUrl: string, private fetchImpl: typeof fetch = fetch) {}
+  constructor(private proxyUrl: string, private statusUrl: string, private fetchImpl: typeof fetch = fetch, private settleMs = 2000) {}
 
   async status(): Promise<{ ready: boolean; configHash?: string }> {
     try {
@@ -19,7 +19,11 @@ export class Gateway {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const { configHash } = await this.status();
-      if (configHash && configHash !== before && !/^0+$/.test(configHash)) return true;
+      if (configHash && configHash !== before && !/^0+$/.test(configHash)) {
+        // The hash flips before every worker has rebuilt its router; give them a moment.
+        await new Promise((r) => setTimeout(r, this.settleMs));
+        return true;
+      }
       await new Promise((r) => setTimeout(r, 1000));
     }
     return false;

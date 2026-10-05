@@ -1,4 +1,4 @@
-import type { Flow, FlowEdge, FlowNode, HttpJobData, NodeKind } from './schema';
+import type { DatabaseData, Flow, FlowEdge, FlowNode, HttpJobData, NodeKind } from './schema';
 import { HTTP_METHODS, SLUG_RE } from './schema';
 import { ALIAS_RE, NameAllocator, lowerSnake, upperSnake } from './naming';
 import { hasPlaceholders, templateFallback, templateToJq } from './template';
@@ -20,7 +20,22 @@ export interface CompileResult {
   route?: { path: string; method: string };
   /** UI node id -> DataKit node names it compiled into (used to map traces onto the canvas). */
   nodeMap: Record<string, string[]>;
+  /** UI node id -> error-path node names (body jq, exit) that run only when the node fails. */
+  failPaths: Record<string, string[]>;
 }
+
+export interface CompileOptions {
+  /** Base URL of the db-access service as seen from the data plane. */
+  dbAccessUrl?: string;
+  /** Prefix of the Konnect vault holding database connection strings. */
+  dbVaultPrefix?: string;
+}
+
+export const DEFAULT_DB_ACCESS_URL = 'http://db-access:4020';
+export const DEFAULT_DB_VAULT_PREFIX = 'ipaasdb';
+
+/** Vault reference of a stored connection string (key = connection name). */
+export const connectionVaultRef = (name: string, prefix = DEFAULT_DB_VAULT_PREFIX) => `{vault://${prefix}/${name}}`;
 
 /** A data input of a node: the alias it gets in jq, and the DataKit references feeding it. */
 interface DataInput { alias: string; edge: FlowEdge; source: FlowNode }
@@ -28,10 +43,13 @@ interface DataInput { alias: string; edge: FlowEdge; source: FlowNode }
 const NO_DATA_OUT: NodeKind[] = ['condition', 'response'];
 const NO_DATA_IN: NodeKind[] = ['trigger', 'static', 'secret'];
 
-export function compileFlow(flow: Flow): CompileResult {
+export function compileFlow(flow: Flow, opts: CompileOptions = {}): CompileResult {
   const errors: CompileError[] = [];
   const nodeMap: Record<string, string[]> = {};
-  const fail = (): CompileResult => ({ ok: false, errors, nodeMap });
+  const failPaths: Record<string, string[]> = {};
+  const fail = (): CompileResult => ({ ok: false, errors, nodeMap, failPaths });
+  const dbAccessUrl = (opts.dbAccessUrl ?? DEFAULT_DB_ACCESS_URL).replace(/\/+$/, '');
+  const dbVaultPrefix = opts.dbVaultPrefix ?? DEFAULT_DB_VAULT_PREFIX;
   const { nodes, edges } = flow.graph;
 
   if (!SLUG_RE.test(flow.slug)) errors.push({ message: `Invalid slug "${flow.slug}" (use lowercase letters, digits and dashes)` });
@@ -116,6 +134,18 @@ export function compileFlow(flow: Flow): CompileResult {
       case 'secret':
         if (!/^[A-Z_][A-Z0-9_]*$/.test(n.data.env ?? '')) errors.push({ nodeId: n.id, message: `${n.data.label}: env var name must be UPPER_SNAKE` });
         break;
+      case 'database': {
+        const d = n.data;
+        if (!/^[a-z0-9_]+$/.test(d.connection ?? '')) errors.push({ nodeId: n.id, message: `${d.label}: choose a connection` });
+        if (!d.sql?.trim()) errors.push({ nodeId: n.id, message: `${d.label}: SQL is empty` });
+        for (const [k, v] of Object.entries(d.params ?? {})) {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) errors.push({ nodeId: n.id, message: `${d.label}: invalid variable name "${k}"` });
+          if (!String(v ?? '').trim()) errors.push({ nodeId: n.id, message: `${d.label}: variable :${k} has no value expression` });
+        }
+        const st = d.errorStatus ?? 502;
+        if (!Number.isInteger(st) || st < 100 || st > 599) errors.push({ nodeId: n.id, message: `${d.label}: error status must be 100-599` });
+        break;
+      }
       case 'response':
         if (!ins.length) errors.push({ nodeId: n.id, message: 'Response needs at least one input to aggregate' });
         if (!Number.isInteger(n.data.status) || n.data.status < 100 || n.data.status > 599) errors.push({ nodeId: n.id, message: 'Response status must be 100-599' });
@@ -138,6 +168,8 @@ export function compileFlow(flow: Flow): CompileResult {
   const out: DatakitNode[] = [];
   const vault: Record<string, string> = {};
   const vaultKey = new Map<string, string>();
+  /** Names a condition branch may skip; for database nodes only the request + call, so their gate still runs. */
+  const gateNames = new Map<string, string[]>();
 
   /** jq `inputs` map plus a prelude that regroups trigger inputs under their alias. */
   const jqInputs = (ins: DataInput[]) => {
@@ -200,6 +232,9 @@ export function compileFlow(flow: Flow): CompileResult {
       case 'http':
         out.push(...compileHttp(n, name, ins));
         break;
+      case 'database':
+        out.push(...compileDatabase(n, name, ins));
+        break;
       case 'response': {
         const { inputs, wrap } = jqInputs(ins);
         const body = helper(n, 'BODY');
@@ -208,6 +243,53 @@ export function compileFlow(flow: Flow): CompileResult {
         break;
       }
     }
+  }
+
+  /**
+   * PARAMS (jq over inputs) -> REQ (+ connection string from the vault) ->
+   * CALL (POST db-access /query) -> OK -> GATE.
+   * The connection string is resolved by the data plane from the Konnect vault;
+   * the plugin config only holds the {vault://…} reference, and user jq never sees it.
+   * db-access answers 200 with {ok:false,...} on errors. The gate runs the result
+   * node on success, or the error exit, which ends the flow with the database
+   * message. (A DataKit node may belong to one branch only, so the gate owns just
+   * this node's own result and error path.)
+   */
+  function compileDatabase(n: FlowNode & { type: 'database' }, name: string, ins: DataInput[]): DatakitNode[] {
+    const d: DatabaseData = n.data;
+    const { inputs, wrap } = jqInputs(ins);
+    const params = Object.entries(d.params ?? {}).map(([k, v]) => `${JSON.stringify(k)}: (${v.trim()})`).join(', ');
+    const vaultEntry = `db_${d.connection}`;
+    vault[vaultEntry] = connectionVaultRef(d.connection, dbVaultPrefix);
+    const paramsNode = helper(n, 'PARAMS');
+    const req = helper(n, 'REQ');
+    const call = helper(n, 'CALL');
+    const ok = helper(n, 'OK');
+    const gate = helper(n, 'GATE');
+    const errBody = names.take(`${name}__ERR_BODY`);
+    const errExit = names.take(`${name}__ERR`);
+    failPaths[n.id] = [errBody, errExit];
+    gateNames.set(n.id, [paramsNode, req, call]);
+    const res = `${call}.body`;
+    return [
+      { name: paramsNode, type: 'jq', inputs, jq: wrap(`{${params}}`) },
+      {
+        name: req, type: 'jq', inputs: { p: paramsNode, c: `vault.${vaultEntry}` },
+        jq: `{connection: ${JSON.stringify(d.connection)}, connectionString: .c, sql: ${JSON.stringify(d.sql)}, params: .p}`,
+      },
+      // Fail fast if db-access itself is unreachable (its statement timeout is 10s).
+      { name: call, type: 'call', method: 'POST', url: `${dbAccessUrl}/query`, timeout: 15000, inputs: { body: req } },
+      // A skipped query (condition gate) arrives as null and counts as OK so the flow continues.
+      { name: ok, type: 'jq', inputs: { r: res }, jq: '.r == null or .r.ok == true' },
+      { name: gate, type: 'branch', input: ok, then: [name], else: [errBody, errExit] },
+      // Error path first so it is scheduled before anything downstream of the result.
+      {
+        name: errBody, type: 'jq', inputs: { r: res },
+        jq: `{error: "database query failed", node: ${JSON.stringify(d.label)}, message: .r.error, code: .r.code, detail: .r.detail, hint: .r.hint}`,
+      },
+      { name: errExit, type: 'exit', status: d.errorStatus ?? 502, inputs: { body: errBody } },
+      { name, type: 'jq', inputs: { r: res }, jq: 'if .r == null then null else {rows: .r.rows, row_count: .r.rowCount, fields: .r.fields, truncated: .r.truncated} end' },
+    ];
   }
 
   function compileHttp(n: FlowNode & { type: 'http' }, name: string, ins: DataInput[]): DatakitNode[] {
@@ -260,11 +342,11 @@ export function compileFlow(flow: Flow): CompileResult {
       const ps = [...parents.get(n.id)!];
       if (ps.length && ps.every((p) => set.has(p))) set.add(n.id);
     }
-    return order.filter((n) => set.has(n.id)).flatMap((n) => nodeMap[n.id]);
+    return order.filter((n) => set.has(n.id)).flatMap((n) => gateNames.get(n.id) ?? nodeMap[n.id]);
   }
 
   const config: DatakitConfig = { debug: flow.debug ?? true, nodes: out };
   if (Object.keys(vault).length) config.resources = { vault };
   const trigger = triggers[0] as FlowNode & { type: 'trigger' };
-  return { ok: true, errors, config, nodeMap, route: { path: `/flows/${flow.slug}`, method: trigger.data.method } };
+  return { ok: true, errors, config, nodeMap, failPaths, route: { path: `/flows/${flow.slug}`, method: trigger.data.method } };
 }

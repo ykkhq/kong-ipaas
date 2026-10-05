@@ -114,6 +114,215 @@ exports[`compileFlow > compiles the seeded examples > customer-360 1`] = `
 }
 `;
 
+exports[`compileFlow > compiles the seeded examples > customer-db 1`] = `
+{
+  "debug": true,
+  "nodes": [
+    {
+      "inputs": {
+        "req__headers": "request.headers",
+        "req__query": "request.query",
+      },
+      "jq": "(. as $in | ($in | with_entries(select(.key | test("__(query|headers|body)$") | not))) + {req: {query: .req__query, headers: .req__headers}}) | ({"id": (.req.query.id // "1")})",
+      "name": "FIND_CUSTOMER__PARAMS",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "c": "vault.db_sample",
+        "p": "FIND_CUSTOMER__PARAMS",
+      },
+      "jq": "{connection: "sample", connectionString: .c, sql: "SELECT id, name, email, city, tier\\nFROM customers\\nWHERE id = :id", params: .p}",
+      "name": "FIND_CUSTOMER__REQ",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "FIND_CUSTOMER__REQ",
+      },
+      "method": "POST",
+      "name": "FIND_CUSTOMER__CALL",
+      "timeout": 15000,
+      "type": "call",
+      "url": "http://db-access:4020/query",
+    },
+    {
+      "inputs": {
+        "r": "FIND_CUSTOMER__CALL.body",
+      },
+      "jq": ".r == null or .r.ok == true",
+      "name": "FIND_CUSTOMER__OK",
+      "type": "jq",
+    },
+    {
+      "else": [
+        "FIND_CUSTOMER__ERR_BODY",
+        "FIND_CUSTOMER__ERR",
+      ],
+      "input": "FIND_CUSTOMER__OK",
+      "name": "FIND_CUSTOMER__GATE",
+      "then": [
+        "FIND_CUSTOMER",
+      ],
+      "type": "branch",
+    },
+    {
+      "inputs": {
+        "r": "FIND_CUSTOMER__CALL.body",
+      },
+      "jq": "{error: "database query failed", node: "Find Customer", message: .r.error, code: .r.code, detail: .r.detail, hint: .r.hint}",
+      "name": "FIND_CUSTOMER__ERR_BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "FIND_CUSTOMER__ERR_BODY",
+      },
+      "name": "FIND_CUSTOMER__ERR",
+      "status": 502,
+      "type": "exit",
+    },
+    {
+      "inputs": {
+        "r": "FIND_CUSTOMER__CALL.body",
+      },
+      "jq": "if .r == null then null else {rows: .r.rows, row_count: .r.rowCount, fields: .r.fields, truncated: .r.truncated} end",
+      "name": "FIND_CUSTOMER",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "req__headers": "request.headers",
+        "req__query": "request.query",
+      },
+      "jq": "(. as $in | ($in | with_entries(select(.key | test("__(query|headers|body)$") | not))) + {req: {query: .req__query, headers: .req__headers}}) | ({"id": (.req.query.id // "1")})",
+      "name": "CUSTOMER_ORDERS__PARAMS",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "c": "vault.db_sample",
+        "p": "CUSTOMER_ORDERS__PARAMS",
+      },
+      "jq": "{connection: "sample", connectionString: .c, sql: "SELECT o.id, o.status, o.created_at,\\n       sum(p.price * i.qty)::float AS total,\\n       count(*)::int AS items\\nFROM orders o\\nJOIN order_items i ON i.order_id = o.id\\nJOIN products p ON p.sku = i.sku\\nWHERE o.customer_id = :id\\nGROUP BY o.id\\nORDER BY o.created_at DESC", params: .p}",
+      "name": "CUSTOMER_ORDERS__REQ",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "CUSTOMER_ORDERS__REQ",
+      },
+      "method": "POST",
+      "name": "CUSTOMER_ORDERS__CALL",
+      "timeout": 15000,
+      "type": "call",
+      "url": "http://db-access:4020/query",
+    },
+    {
+      "inputs": {
+        "r": "CUSTOMER_ORDERS__CALL.body",
+      },
+      "jq": ".r == null or .r.ok == true",
+      "name": "CUSTOMER_ORDERS__OK",
+      "type": "jq",
+    },
+    {
+      "else": [
+        "CUSTOMER_ORDERS__ERR_BODY",
+        "CUSTOMER_ORDERS__ERR",
+      ],
+      "input": "CUSTOMER_ORDERS__OK",
+      "name": "CUSTOMER_ORDERS__GATE",
+      "then": [
+        "CUSTOMER_ORDERS",
+      ],
+      "type": "branch",
+    },
+    {
+      "inputs": {
+        "r": "CUSTOMER_ORDERS__CALL.body",
+      },
+      "jq": "{error: "database query failed", node: "Customer Orders", message: .r.error, code: .r.code, detail: .r.detail, hint: .r.hint}",
+      "name": "CUSTOMER_ORDERS__ERR_BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "CUSTOMER_ORDERS__ERR_BODY",
+      },
+      "name": "CUSTOMER_ORDERS__ERR",
+      "status": 502,
+      "type": "exit",
+    },
+    {
+      "inputs": {
+        "r": "CUSTOMER_ORDERS__CALL.body",
+      },
+      "jq": "if .r == null then null else {rows: .r.rows, row_count: .r.rowCount, fields: .r.fields, truncated: .r.truncated} end",
+      "name": "CUSTOMER_ORDERS",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "customer": "FIND_CUSTOMER",
+      },
+      "jq": "(.customer.row_count > 0) | (. != false and . != null)",
+      "name": "CUSTOMER_FOUND",
+      "type": "jq",
+    },
+    {
+      "input": "CUSTOMER_FOUND",
+      "name": "CUSTOMER_FOUND__BRANCH",
+      "then": [
+        "GET_WEATHER",
+        "GET_WEATHER__QUERY",
+      ],
+      "type": "branch",
+    },
+    {
+      "inputs": {
+        "customer": "FIND_CUSTOMER",
+      },
+      "jq": "({city: .customer.rows[0].city})",
+      "name": "GET_WEATHER__QUERY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "query": "GET_WEATHER__QUERY",
+      },
+      "method": "GET",
+      "name": "GET_WEATHER",
+      "type": "call",
+      "url": "http://mocks:4010/weather",
+    },
+    {
+      "inputs": {
+        "customer": "FIND_CUSTOMER",
+        "orders": "CUSTOMER_ORDERS",
+        "weather": "GET_WEATHER.body",
+      },
+      "jq": "(if .customer.row_count == 0 then {error: "customer not found"} else {customer: .customer.rows[0], orders: .orders.rows, order_count: .orders.row_count, weather: .weather} end)",
+      "name": "RESPONSE__BODY",
+      "type": "jq",
+    },
+    {
+      "inputs": {
+        "body": "RESPONSE__BODY",
+      },
+      "name": "RESPONSE",
+      "status": 200,
+      "type": "exit",
+    },
+  ],
+  "resources": {
+    "vault": {
+      "db_sample": "{vault://ipaasdb/sample}",
+    },
+  },
+}
+`;
+
 exports[`compileFlow > compiles the seeded examples > inventory 1`] = `
 {
   "debug": true,

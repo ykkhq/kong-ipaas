@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import { HTTP_METHODS, lowerSnake, type FlowNode } from '@ipaas/flow-core';
 import { KINDS } from '../catalog';
+import { DatabaseFields } from './DatabaseFields';
 
 interface Props {
   node?: FlowNode;
@@ -66,6 +67,8 @@ export function Inspector({ node, edge, nodes, edges, slug, onNode, onEdge, onDe
           {d.method !== 'GET' && <Jq label="Body (jq)" value={d.body} onChange={(body) => set({ body })} placeholder="{order: .req.body}" />}
         </>
       )}
+
+      {node.type === 'database' && <DatabaseFields key={node.id} data={d} inputs={inputs} onChange={set} />}
 
       {(node.type === 'transform' || node.type === 'condition') && (
         <Jq label={node.type === 'condition' ? 'Condition (jq → boolean)' : 'jq expression'} value={d.expr} onChange={(expr) => set({ expr })} rows={6} />

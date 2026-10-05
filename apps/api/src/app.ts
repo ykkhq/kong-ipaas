@@ -2,7 +2,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { SLUG_RE, exampleFlows, summarizeTrace, type FlowGraph, type TraceSummary } from '@ipaas/flow-core';
 import { stringify } from 'yaml';
 import type { Db, FlowRow } from './db';
-import { compileRow, type Deployer } from './deployer';
+import { ConnectionError, type ConnectionService } from './connections';
+import { usesDatabase, type DbAccessManager } from './dbaccess';
+import type { Deployer } from './deployer';
 import type { Gateway } from './gateway';
 import type { Konnect } from './konnect';
 
@@ -11,6 +13,8 @@ export interface Deps {
   konnect: Konnect;
   gateway: Gateway;
   deployer: Deployer;
+  dbAccess: DbAccessManager;
+  connections: ConnectionService;
   publicGatewayUrl: string;
 }
 
@@ -32,7 +36,13 @@ const flowSchema = {
 } as const;
 
 export function buildApp(deps: Deps): FastifyInstance {
-  const { db, konnect, gateway, deployer } = deps;
+  const { db, konnect, gateway, deployer, dbAccess, connections } = deps;
+
+  /** "When a Database node is configured": bring db-access up in the background. */
+  const ensureDbAccessFor = (graph: FlowGraph) => {
+    if (!usesDatabase(graph)) return;
+    dbAccess.ensure().then((s) => s.state === 'error' && app.log.error(`db-access: ${s.error}`));
+  };
   const app = Fastify({ logger: true, bodyLimit: 2 * 1024 * 1024 });
 
   const view = (row: FlowRow) => ({
@@ -46,6 +56,7 @@ export function buildApp(deps: Deps): FastifyInstance {
   };
 
   app.setErrorHandler((err: any, _req, reply) => {
+    if (err instanceof ConnectionError) return reply.code(err.status).send({ error: err.message });
     if (err.code === '23505') return reply.code(409).send({ error: 'A flow with this slug already exists' });
     const status = err.statusCode ?? 500;
     if (status >= 500) app.log.error(err);
@@ -72,7 +83,9 @@ export function buildApp(deps: Deps): FastifyInstance {
 
   app.post<{ Body: FlowBody }>('/api/flows', { schema: { body: flowSchema } }, async (req, reply) => {
     reply.code(201);
-    return view(await db.create(req.body));
+    const row = await db.create(req.body);
+    ensureDbAccessFor(row.graph);
+    return view(row);
   });
 
   app.get<{ Params: { id: string } }>('/api/flows/:id', async (req, reply) => {
@@ -86,7 +99,9 @@ export function buildApp(deps: Deps): FastifyInstance {
     if (existing.deployed_version && existing.slug !== req.body.slug) {
       return reply.code(409).send({ error: 'Undeploy the flow before changing its slug' });
     }
-    return view((await db.update(existing.id, req.body))!);
+    const row = (await db.update(existing.id, req.body))!;
+    ensureDbAccessFor(row.graph);
+    return view(row);
   });
 
   app.delete<{ Params: { id: string } }>('/api/flows/:id', async (req, reply) => {
@@ -99,7 +114,8 @@ export function buildApp(deps: Deps): FastifyInstance {
 
   /** Compiles a graph without saving (live preview while editing). */
   app.post<{ Body: FlowBody }>('/api/compile', { schema: { body: flowSchema } }, async (req) => {
-    const r = compileRow({ ...req.body, debug: req.body.debug ?? true });
+    const r = deployer.compile({ ...req.body, debug: req.body.debug ?? true });
+    ensureDbAccessFor(req.body.graph);
     return { ...r, yaml: r.config ? stringify({ name: 'datakit', config: r.config }) : null };
   });
 
@@ -124,16 +140,19 @@ export function buildApp(deps: Deps): FastifyInstance {
   }>('/api/flows/:id/test', async (req, reply) => {
     const row = await load(req.params.id);
     if (!row) return reply.code(404).send({ error: 'Flow not found' });
-    const compiled = compileRow(row);
+    const compiled = deployer.compile(row);
     const trigger = row.graph.nodes.find((n) => n.type === 'trigger');
     const method = trigger?.type === 'trigger' ? trigger.data.method : 'GET';
     const trace = (req.body?.trace ?? true) && row.debug;
     const res = await gateway.invoke(`/flows/${row.slug}`, { method, ...req.body, trace });
     const isTrace = trace && typeof res.body === 'object' && res.body !== null && 'events' in res.body;
-    const summary = isTrace ? summarizeTrace(res.body as any, compiled.nodeMap) : undefined;
+    const summary = isTrace ? summarizeTrace(res.body as any, compiled.nodeMap, compiled.failPaths) : undefined;
+    // Trace mode answers 200 with the trace; report the status the flow would have returned.
+    const exitNode = summary?.exit && compiled.config?.nodes.find((n) => n.name === summary.exit!.name);
+    const status = exitNode ? Number(exitNode.status ?? 200) : summary && summary.status !== 'PLAN_COMPLETE' ? 500 : res.status;
     return {
       request: { method, url: res.url },
-      status: res.status,
+      status,
       latencyMs: res.latencyMs,
       headers: res.headers,
       body: summary ? (summary.exit?.body ?? traceFailure(summary)) : res.body,
@@ -141,9 +160,59 @@ export function buildApp(deps: Deps): FastifyInstance {
     };
   });
 
+  // ---- database access ------------------------------------------------------
+  app.get('/api/db/status', async () => dbAccess.status());
+
+  /** Runs SQL with a stored connection (via the gateway, which resolves the vault), for the inspector's "Run query". */
+  app.post<{ Body: { connection: string; sql: string; params?: Record<string, unknown>; maxRows?: number } }>('/api/db/query', async (req, reply) => {
+    try {
+      return await connections.query(req.body);
+    } catch (e) {
+      if (e instanceof ConnectionError) throw e;
+      return reply.code(503).send({ ok: false, error: (e as Error).message });
+    }
+  });
+
+  // ---- connections (strings stored in the Konnect vault) ------------------------
+  const connBody = {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      connectionString: { type: 'string', maxLength: 2000 },
+      description: { type: 'string', maxLength: 500 },
+      skipTest: { type: 'boolean' },
+    },
+  } as const;
+  type ConnBody = { name: string; connectionString?: string; description?: string; skipTest?: boolean };
+
+  app.get('/api/connections', async () => connections.list());
+
+  app.post<{ Body: ConnBody }>('/api/connections', { schema: { body: { ...connBody, required: ['name', 'connectionString'] } } }, async (req, reply) => {
+    reply.code(201);
+    return connections.save(req.body, 'create');
+  });
+
+  /** Rotates the stored string (flows pick it up without redeploy) and/or edits the description. */
+  app.put<{ Params: { name: string }; Body: ConnBody }>('/api/connections/:name', { schema: { body: connBody } }, async (req) =>
+    connections.save({ ...req.body, name: req.params.name }, 'update'));
+
+  app.delete<{ Params: { name: string } }>('/api/connections/:name', async (req, reply) => {
+    await connections.remove(req.params.name);
+    return reply.code(204).send();
+  });
+
+  /** Tests a connection string before saving it. Nothing is stored. */
+  app.post<{ Body: { connectionString: string } }>('/api/connections/test', { schema: { body: { type: 'object', required: ['connectionString'], properties: { connectionString: { type: 'string' } } } } }, async (req) =>
+    connections.testString(req.body.connectionString));
+
+  /** Tests a stored connection end to end through the vault. */
+  app.post<{ Params: { name: string } }>('/api/connections/:name/test', async (req) => connections.testStored(req.params.name));
+
   /** Recreates the bundled example flows that are missing (by slug). */
   app.post<{ Body: { mocksUrl?: string } }>('/api/examples', async (req) => {
-    return seedExamples(db, (req.body as any)?.mocksUrl);
+    const created = await seedExamples(db, (req.body as any)?.mocksUrl);
+    for (const f of created) ensureDbAccessFor(f.graph);
+    return created;
   });
 
   return app;

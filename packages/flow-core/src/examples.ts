@@ -37,6 +37,60 @@ export function exampleFlows(mocks = 'http://mocks:4010'): Flow[] {
       },
     },
     {
+      name: 'Customer from Database',
+      slug: 'customer-db',
+      graph: {
+        nodes: [
+          { id: 'trigger', type: 'trigger', position: { x: 0, y: 160 }, data: { label: 'Request', method: 'GET' } },
+          {
+            id: 'customer', type: 'database', position: { x: 280, y: 40 },
+            data: {
+              label: 'Find Customer', connection: 'sample',
+              sql: 'SELECT id, name, email, city, tier\nFROM customers\nWHERE id = :id',
+              params: { id: '.req.query.id // "1"' },
+            },
+          },
+          {
+            id: 'orders', type: 'database', position: { x: 280, y: 280 },
+            data: {
+              label: 'Customer Orders', connection: 'sample',
+              sql: [
+                'SELECT o.id, o.status, o.created_at,',
+                '       sum(p.price * i.qty)::float AS total,',
+                '       count(*)::int AS items',
+                'FROM orders o',
+                'JOIN order_items i ON i.order_id = o.id',
+                'JOIN products p ON p.sku = i.sku',
+                'WHERE o.customer_id = :id',
+                'GROUP BY o.id',
+                'ORDER BY o.created_at DESC',
+              ].join('\n'),
+              params: { id: '.req.query.id // "1"' },
+            },
+          },
+          { id: 'found', type: 'condition', position: { x: 580, y: 40 }, data: { label: 'Customer Found', expr: '.customer.row_count > 0' } },
+          { id: 'weather', type: 'http', position: { x: 840, y: 0 }, data: { label: 'Get Weather', method: 'GET', url: `${mocks}/weather`, query: '{city: .customer.rows[0].city}' } },
+          {
+            id: 'response', type: 'response', position: { x: 1120, y: 160 },
+            data: {
+              label: 'Response', status: 200,
+              expr: 'if .customer.row_count == 0 then {error: "customer not found"} else {customer: .customer.rows[0], orders: .orders.rows, order_count: .orders.row_count, weather: .weather} end',
+            },
+          },
+        ],
+        edges: [
+          { id: 'e1', source: 'trigger', target: 'customer', data: { alias: 'req' } },
+          { id: 'e2', source: 'trigger', target: 'orders', data: { alias: 'req' } },
+          { id: 'e3', source: 'customer', target: 'weather', data: { alias: 'customer' } },
+          { id: 'e7', source: 'customer', target: 'found', data: { alias: 'customer' } },
+          { id: 'e8', source: 'found', target: 'weather', sourceHandle: 'then' },
+          { id: 'e4', source: 'customer', target: 'response', data: { alias: 'customer' } },
+          { id: 'e5', source: 'orders', target: 'response', data: { alias: 'orders' } },
+          { id: 'e6', source: 'weather', target: 'response', data: { alias: 'weather' } },
+        ],
+      },
+    },
+    {
       name: 'Inventory (XML to JSON)',
       slug: 'inventory',
       graph: {

@@ -18,6 +18,21 @@ export interface FlowRow {
   updated_at: string;
 }
 
+/** Non-secret connection details; the connection string itself lives only in the Konnect vault. */
+export interface ConnectionRow {
+  name: string;
+  description: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  created_at: string;
+  updated_at: string;
+  tested_at: string | null;
+  test_ok: boolean | null;
+  test_error: string | null;
+}
+
 export class Db {
   readonly pool: pg.Pool;
   constructor(url: string) {
@@ -39,7 +54,66 @@ export class Db {
         last_error text,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS db_connections (
+        name text PRIMARY KEY,
+        description text NOT NULL DEFAULT '',
+        host text NOT NULL,
+        port integer NOT NULL,
+        database text NOT NULL,
+        username text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        tested_at timestamptz,
+        test_ok boolean,
+        test_error text
+      );
+      CREATE TABLE IF NOT EXISTS settings (
+        key text PRIMARY KEY,
+        value text NOT NULL
       )`);
+  }
+
+  // ---- settings ----------------------------------------------------------------
+
+  async getSetting(key: string): Promise<string | undefined> {
+    return (await this.pool.query<{ value: string }>('SELECT value FROM settings WHERE key = $1', [key])).rows[0]?.value;
+  }
+
+  /** Stores the value only if the key is new; returns the stored value either way. */
+  async initSetting(key: string, value: string): Promise<string> {
+    await this.pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [key, value]);
+    return (await this.getSetting(key))!;
+  }
+
+  // ---- connections -------------------------------------------------------------
+
+  async listConnections(): Promise<ConnectionRow[]> {
+    return (await this.pool.query<ConnectionRow>('SELECT * FROM db_connections ORDER BY name')).rows;
+  }
+
+  async getConnection(name: string): Promise<ConnectionRow | undefined> {
+    return (await this.pool.query<ConnectionRow>('SELECT * FROM db_connections WHERE name = $1', [name])).rows[0];
+  }
+
+  async upsertConnection(c: Pick<ConnectionRow, 'name' | 'description' | 'host' | 'port' | 'database' | 'username'>): Promise<ConnectionRow> {
+    const q = `INSERT INTO db_connections (name, description, host, port, database, username) VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (name) DO UPDATE SET description = $2, host = $3, port = $4, database = $5, username = $6, updated_at = now()
+      RETURNING *`;
+    return (await this.pool.query<ConnectionRow>(q, [c.name, c.description, c.host, c.port, c.database, c.username])).rows[0];
+  }
+
+  async setConnectionDescription(name: string, description: string): Promise<ConnectionRow | undefined> {
+    const q = 'UPDATE db_connections SET description = $2, updated_at = now() WHERE name = $1 RETURNING *';
+    return (await this.pool.query<ConnectionRow>(q, [name, description])).rows[0];
+  }
+
+  async recordConnectionTest(name: string, ok: boolean, error: string | null): Promise<void> {
+    await this.pool.query('UPDATE db_connections SET tested_at = now(), test_ok = $2, test_error = $3 WHERE name = $1', [name, ok, error]);
+  }
+
+  async deleteConnection(name: string): Promise<void> {
+    await this.pool.query('DELETE FROM db_connections WHERE name = $1', [name]);
   }
 
   async list(): Promise<FlowRow[]> {

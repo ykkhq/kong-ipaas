@@ -40,6 +40,26 @@ export interface PlatformStatus {
   gatewayUrl: string;
 }
 
+/** Connection metadata; the connection string itself is only in the Konnect vault. */
+export interface DbConnection {
+  name: string;
+  description: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  created_at: string;
+  updated_at: string;
+  tested_at: string | null;
+  test_ok: boolean | null;
+  test_error: string | null;
+  used_by: { id: string; name: string }[];
+}
+
+export type QueryResult =
+  | { ok: true; rows: Record<string, unknown>[]; rowCount: number; fields: string[]; truncated: boolean; durationMs: number }
+  | { ok: false; error: string; code?: string; detail?: string; hint?: string; position?: string };
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly data: any) {
     super(message);
@@ -73,4 +93,11 @@ export const api = {
   test: (id: string, req: { query?: Record<string, string>; headers?: Record<string, string>; body?: unknown; trace?: boolean }) =>
     call<TestResponse>('POST', `/flows/${id}/test`, req),
   seedExamples: () => call<FlowRecord[]>('POST', '/examples', {}),
+  connections: () => call<DbConnection[]>('GET', '/connections'),
+  createConnection: (c: { name: string; connectionString: string; description?: string; skipTest?: boolean }) => call<DbConnection>('POST', '/connections', c),
+  updateConnection: (name: string, c: { connectionString?: string; description?: string; skipTest?: boolean }) => call<DbConnection>('PUT', `/connections/${name}`, c),
+  deleteConnection: (name: string) => call<void>('DELETE', `/connections/${name}`),
+  testConnectionString: (connectionString: string) => call<QueryResult>('POST', '/connections/test', { connectionString }),
+  testConnection: (name: string) => call<QueryResult>('POST', `/connections/${name}/test`),
+  dbQuery: (req: { connection: string; sql: string; params?: Record<string, unknown> }) => call<QueryResult>('POST', '/db/query', req),
 };

@@ -10,6 +10,7 @@ function summary(n: FlowNode): string {
   switch (n.type) {
     case 'trigger': return n.data.method;
     case 'http': return `${n.data.method} ${n.data.url}`;
+    case 'database': return `${n.data.connection} · ${n.data.sql.replace(/\s+/g, ' ')}`;
     case 'transform':
     case 'condition': return n.data.expr;
     case 'static': return Object.keys(n.data.values ?? {}).join(', ');

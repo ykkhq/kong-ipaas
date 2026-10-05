@@ -1,4 +1,6 @@
-import { compileFlow, type CompileResult } from '@ipaas/flow-core';
+import { compileFlow, type CompileOptions, type CompileResult } from '@ipaas/flow-core';
+import type { ConnectionService } from './connections';
+import { usesDatabase, type DbAccessManager } from './dbaccess';
 import type { Db, FlowRow } from './db';
 import type { Gateway } from './gateway';
 import type { Konnect } from './konnect';
@@ -12,16 +14,27 @@ export function entityIds(flowId: string) {
   };
 }
 
-export function compileRow(row: Pick<FlowRow, 'name' | 'slug' | 'debug' | 'graph'>): CompileResult {
-  return compileFlow({ name: row.name, slug: row.slug, debug: row.debug, graph: row.graph });
+export function compileRow(row: Pick<FlowRow, 'name' | 'slug' | 'debug' | 'graph'>, opts: CompileOptions = {}): CompileResult {
+  return compileFlow({ name: row.name, slug: row.slug, debug: row.debug, graph: row.graph }, opts);
 }
 
 export class Deployer {
-  constructor(private db: Db, private konnect: Konnect, private gateway: Gateway, private syncTimeoutMs: number) {}
+  constructor(
+    private db: Db,
+    private konnect: Konnect,
+    private gateway: Gateway,
+    private syncTimeoutMs: number,
+    private dbAccess?: DbAccessManager,
+    private connections?: ConnectionService,
+  ) {}
+
+  compile(row: Pick<FlowRow, 'name' | 'slug' | 'debug' | 'graph'>): CompileResult {
+    return compileRow(row, { dbAccessUrl: this.dbAccess?.url, dbVaultPrefix: this.connections?.vaultPrefix });
+  }
 
   /** Pushes service + route + DataKit plugin to Konnect, then waits for the DP to pick it up. */
   async deploy(row: FlowRow): Promise<{ row: FlowRow; compiled: CompileResult; synced: boolean }> {
-    const compiled = compileRow(row);
+    const compiled = this.compile(row);
     if (!compiled.ok) {
       const err = compiled.errors.map((e) => e.message).join('; ');
       return { row: await this.db.setStatus(row.id, 'error', { last_error: err }), compiled, synced: false };
@@ -30,6 +43,15 @@ export class Deployer {
     const ids = entityIds(row.id);
     const tags = ['ipaas', `flow-${row.id}`];
     try {
+      if (this.dbAccess && usesDatabase(row.graph)) {
+        if (this.connections) {
+          const missing = await this.connections.missingFor(row.graph);
+          if (missing.length) throw new Error(`Unknown database connection(s): ${missing.join(', ')}. Create them under Connections first.`);
+          await this.connections.setup();
+        }
+        const s = await this.dbAccess.ensure();
+        if (s.state !== 'running') throw new Error(`db-access is not running: ${s.error}`);
+      }
       const before = (await this.gateway.status()).configHash;
       await this.konnect.upsert('services', ids.service, {
         name: `ipaas-${row.slug}`,

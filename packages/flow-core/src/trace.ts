@@ -31,7 +31,7 @@ export interface TraceSummary {
   /** Aggregated state per designer node id. */
   byUiNode: Record<string, NodeTrace>;
   /** The body the exit node returned (trace mode replaces the HTTP body). */
-  exit?: { status?: unknown; body: unknown };
+  exit?: { name: string; body: unknown };
 }
 
 /** DataKit wraps values as {type, value}; objects nest wrappers per field. */
@@ -49,7 +49,11 @@ export function unwrap(v: unknown): unknown {
 
 const RANK: Record<NodeState, number> = { fail: 5, cancel: 4, running: 3, skip: 2, complete: 1 };
 
-export function summarizeTrace(trace: { status?: string; events?: TraceEvent[] }, nodeMap: Record<string, string[]> = {}): TraceSummary {
+export function summarizeTrace(
+  trace: { status?: string; events?: TraceEvent[] },
+  nodeMap: Record<string, string[]> = {},
+  failPaths: Record<string, string[]> = {},
+): TraceSummary {
   const events = trace.events ?? [];
   const t0 = events.length ? BigInt(events[0].at) : 0n;
   const ms = (at: string) => Number(BigInt(at) - t0) / 1e6;
@@ -68,7 +72,7 @@ export function summarizeTrace(trace: { status?: string; events?: TraceEvent[] }
         n.input = unwrap(e.value);
         if (e.node_type === 'exit') {
           const input = n.input as { body?: unknown; status?: unknown } | undefined;
-          exit = { body: input?.body ?? null, status: input?.status };
+          exit = { name: e.name, body: input?.body ?? null };
         }
         break;
       case 'complete':
@@ -105,6 +109,13 @@ export function summarizeTrace(trace: { status?: string; events?: TraceEvent[] }
       startMs: Math.min(...parts.map((p) => p.startMs ?? Infinity)),
       endMs: Math.max(...parts.map((p) => p.endMs ?? 0)),
     };
+  }
+
+  // Error paths (e.g. a failed database query): if the error exit ran, the node failed.
+  for (const [uiId, [bodyName, exitName]] of Object.entries(failPaths)) {
+    const ran = nodes.get(exitName);
+    if (ran?.state !== 'complete' || !byUiNode[uiId]) continue;
+    byUiNode[uiId] = { ...byUiNode[uiId], state: 'fail', error: nodes.get(bodyName)?.output };
   }
 
   return { status: trace.status ?? 'UNKNOWN', totalMs: end, nodes: [...nodes.values()], byUiNode, exit };

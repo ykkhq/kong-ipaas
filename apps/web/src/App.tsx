@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FlowList } from './components/FlowList';
 import { Designer } from './components/Designer';
+import { ConnectionsPage } from './components/ConnectionsPage';
 
 function useHashRoute(): string {
   const [hash, setHash] = useState(() => window.location.hash);
@@ -15,5 +16,6 @@ function useHashRoute(): string {
 export function App() {
   const route = useHashRoute();
   const m = route.match(/^\/flows\/([^/]+)$/);
-  return m ? <Designer key={m[1]} flowId={m[1]} /> : <FlowList />;
+  if (m) return <Designer key={m[1]} flowId={m[1]} />;
+  return route === '/connections' ? <ConnectionsPage /> : <FlowList />;
 }

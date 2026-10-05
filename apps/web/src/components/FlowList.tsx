@@ -47,6 +47,8 @@ export function FlowList() {
     <div className="page">
       <header className="topbar">
         <div className="brand"><img src="/favicon.svg" alt="" /> Flow Builder</div>
+        <Nav active="flows" />
+        <span className="spacer" />
         <PlatformPill status={status} />
       </header>
       <main className="list">
@@ -89,6 +91,15 @@ export function FlowList() {
         )}
       </main>
     </div>
+  );
+}
+
+export function Nav({ active }: { active: 'flows' | 'connections' }) {
+  return (
+    <nav className="nav">
+      <a href="#/" className={active === 'flows' ? 'active' : ''}>Flows</a>
+      <a href="#/connections" className={active === 'connections' ? 'active' : ''}>Connections</a>
+    </nav>
   );
 }
 

@@ -21,6 +21,17 @@ export interface StaticData { label: string; values: Record<string, unknown> }
 export interface SecretData { label: string; env: string }
 export interface XmlData { label: string }
 export interface ResponseData { label: string; status: number; expr?: string }
+export interface DatabaseData {
+  label: string;
+  /** Connection name configured on db-access (DB_CONN_<NAME>). */
+  connection: string;
+  /** SQL with `:name` variables; values are always bound as parameters. */
+  sql: string;
+  /** Variable name -> jq expression evaluated over the node's inputs. */
+  params?: Record<string, string>;
+  /** Status returned to the caller when the query fails (default 502). */
+  errorStatus?: number;
+}
 
 export interface NodeDataByKind {
   trigger: TriggerData;
@@ -31,9 +42,10 @@ export interface NodeDataByKind {
   secret: SecretData;
   xml: XmlData;
   response: ResponseData;
+  database: DatabaseData;
 }
 export type NodeKind = keyof NodeDataByKind;
-export const NODE_KINDS = ['trigger', 'http', 'transform', 'condition', 'static', 'secret', 'xml', 'response'] as const satisfies readonly NodeKind[];
+export const NODE_KINDS = ['trigger', 'http', 'database', 'transform', 'condition', 'static', 'secret', 'xml', 'response'] as const satisfies readonly NodeKind[];
 
 export type FlowNode = {
   [K in NodeKind]: { id: string; type: K; position: { x: number; y: number }; data: NodeDataByKind[K] };

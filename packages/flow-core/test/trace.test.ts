@@ -25,3 +25,26 @@ describe('summarizeTrace', () => {
     expect(s.exit).toBeUndefined();
   });
 });
+
+describe('summarizeTrace with database nodes', async () => {
+  // Captured from Kong 3.16 running the customer-db example against db-access + Postgres 16.
+  const dbOk = (await import('./fixtures/trace-db-ok.json')).default;
+  const dbFail = (await import('./fixtures/trace-db-fail.json')).default;
+  const compiled = compileFlow(exampleFlows().find((f) => f.slug === 'customer-db')!);
+
+  it('reports rows and a completed node on success', () => {
+    const s = summarizeTrace(dbOk as any, compiled.nodeMap, compiled.failPaths);
+    expect(s.exit!.name).toBe('RESPONSE');
+    expect((s.exit!.body as any).customer.name).toBe('Ada Lovelace');
+    expect(s.byUiNode.customer.state).toBe('complete');
+    expect(s.byUiNode.orders.state).toBe('complete');
+  });
+
+  it('marks the database node failed and returns the error exit body', () => {
+    const s = summarizeTrace(dbFail as any, compiled.nodeMap, compiled.failPaths);
+    expect(s.exit!.name).toBe('FIND_CUSTOMER__ERR');
+    expect(s.exit!.body).toMatchObject({ error: 'database query failed', node: 'Find Customer', code: '22P02' });
+    expect(s.byUiNode.customer.state).toBe('fail');
+    expect((s.byUiNode.customer.error as any).message).toMatch(/invalid input syntax for type integer/);
+  });
+});

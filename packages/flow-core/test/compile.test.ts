@@ -82,6 +82,64 @@ describe('compileFlow', () => {
     expect(byName(r, 'A__HEADERS')!.inputs).toEqual({ key: 'vault.api_key' });
   });
 
+  it('compiles a database node into request, call, gate, error exit and result', () => {
+    const db: FlowNode = { id: 'd', type: 'database', position: pos, data: { label: 'Users', connection: 'sample', sql: 'SELECT * FROM users WHERE id = :id', params: { id: '.req.query.id' } } };
+    const r = compileFlow(flow(
+      [trigger, db, http('w', 'Weather', 'http://x/w', { query: '{city: .users.rows[0].city}' }), response()],
+      [
+        { id: '1', source: 't', target: 'd', data: { alias: 'req' } },
+        { id: '2', source: 'd', target: 'w', data: { alias: 'users' } },
+        { id: '3', source: 'd', target: 'r', data: { alias: 'users' } },
+        { id: '4', source: 'w', target: 'r' },
+      ],
+    ), { dbAccessUrl: 'http://db:1/' });
+    expect(r.errors).toEqual([]);
+    expect(byName(r, 'USERS__PARAMS')!.jq).toContain('({"id": (.req.query.id)})');
+    expect(byName(r, 'USERS__PARAMS')!.inputs).not.toHaveProperty('c');
+    expect(byName(r, 'USERS__REQ')).toEqual({
+      name: 'USERS__REQ', type: 'jq', inputs: { p: 'USERS__PARAMS', c: 'vault.db_sample' },
+      jq: '{connection: "sample", connectionString: .c, sql: "SELECT * FROM users WHERE id = :id", params: .p}',
+    });
+    expect(r.config!.resources).toEqual({ vault: { db_sample: '{vault://ipaasdb/sample}' } });
+    expect(byName(r, 'USERS__CALL')).toEqual({ name: 'USERS__CALL', type: 'call', method: 'POST', url: 'http://db:1/query', timeout: 15000, inputs: { body: 'USERS__REQ' } });
+    expect(byName(r, 'USERS__GATE')).toEqual({
+      name: 'USERS__GATE', type: 'branch', input: 'USERS__OK', then: ['USERS'], else: ['USERS__ERR_BODY', 'USERS__ERR'],
+    });
+    const names = r.config!.nodes.map((n) => n.name);
+    expect(names.indexOf('USERS__ERR')).toBeLessThan(names.indexOf('USERS'));
+    expect(byName(r, 'USERS__ERR')).toMatchObject({ type: 'exit', status: 502, inputs: { body: 'USERS__ERR_BODY' } });
+    expect(byName(r, 'WEATHER__QUERY')!.inputs).toEqual({ users: 'USERS' });
+    expect(r.failPaths.d).toEqual(['USERS__ERR_BODY', 'USERS__ERR']);
+  });
+
+  it('lets a condition skip only the query of a database node', () => {
+    const r = compileFlow(flow(
+      [
+        trigger,
+        { id: 'c', type: 'condition', position: pos, data: { label: 'Has Id', expr: '.req.query.id != null' } },
+        { id: 'd', type: 'database', position: pos, data: { label: 'Q', connection: 'sample', sql: 'SELECT 1' } },
+        response(),
+      ],
+      [
+        { id: '1', source: 't', target: 'c', data: { alias: 'req' } },
+        { id: '2', source: 'c', target: 'd', sourceHandle: 'then' },
+        { id: '3', source: 'd', target: 'r' },
+      ],
+    ));
+    expect(r.errors).toEqual([]);
+    expect(byName(r, 'HAS_ID__BRANCH')!.then).toEqual(['Q__PARAMS', 'Q__REQ', 'Q__CALL']);
+  });
+
+  it('validates database nodes', () => {
+    const r = compileFlow(flow(
+      [trigger, { id: 'd', type: 'database', position: pos, data: { label: 'Q', connection: '', sql: ' ', params: { 'bad-name': '1', ok: '' } } }, response()],
+      [{ id: '1', source: 'd', target: 'r' }],
+    ));
+    expect(r.errors.map((e) => e.message)).toEqual([
+      'Q: choose a connection', 'Q: SQL is empty', 'Q: invalid variable name "bad-name"', 'Q: variable :ok has no value expression',
+    ]);
+  });
+
   it('dedupes node names', () => {
     const r = compileFlow(flow([trigger, http('a', 'Call', 'http://x/1'), http('b', 'Call', 'http://x/2'), response()],
       [{ id: '1', source: 'a', target: 'r' }, { id: '2', source: 'b', target: 'r', data: { alias: 'call2' } }]));

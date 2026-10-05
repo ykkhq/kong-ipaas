@@ -79,11 +79,20 @@ services:
       DP_PROXY_URL: http://kong-dp:8000
       DP_STATUS_URL: http://kong-dp:8100
       MOCKS_URL: http://mocks:4010
+      DB_ACCESS_IMAGE: ipaas-db-access:latest
+      # Seeded once into the Konnect vault as connection "sample" (more: DB_CONN_<NAME> in .env).
+      # After that, connections are managed in the UI and live only in the vault.
+      DB_CONN_SAMPLE: ${DB_CONN_SAMPLE:-postgres://ipaas_app:app@sample-db:5432/sample}
     secrets:
       - konnect_pat
+    volumes:
+      # Lets the API start the db-access container on demand.
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
+      db-access-image:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # Flow designer UI (nginx serves the SPA and proxies /api).
@@ -108,9 +117,39 @@ services:
       - "${MOCKS_PORT:-4010}:4010"
     restart: unless-stopped
 
+  # Builds the db-access image only. The API runs the container itself
+  # (ipaas-db-access) once a flow uses a Database node, and keeps it running.
+  db-access-image:
+    build:
+      context: .
+      dockerfile: apps/db-access/Dockerfile
+    image: ipaas-db-access:latest
+    entrypoint: ["true"]
+    restart: "no"
+
+  # Stub Postgres 16 with sample data for Database nodes (connection "sample").
+  sample-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sample
+      POSTGRES_PASSWORD: sample
+      POSTGRES_DB: sample
+    volumes:
+      - sampledb:/var/lib/postgresql/data
+      - ./infra/sample-db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${SAMPLE_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sample -d sample"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
 volumes:
   dp-certs:
   pgdata:
+  sampledb:
 
 secrets:
   # Konnect token, read from a file so it never lands in .env or the image.

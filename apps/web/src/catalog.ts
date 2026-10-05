@@ -23,6 +23,10 @@ export const KINDS: Record<NodeKind, KindInfo> = {
     title: 'HTTP Job', description: 'Call an API (runs in parallel unless chained)', color: '#a78bfa', glyph: '⇄', inputs: true, output: true,
     defaults: () => ({ label: 'Call API', method: 'GET', url: 'http://mocks:4010/users/1' }),
   },
+  database: {
+    title: 'Database', description: 'Run a SQL query (variables are bound safely)', color: '#60a5fa', glyph: '⛁', inputs: true, output: true,
+    defaults: () => ({ label: 'Query', connection: 'sample', sql: 'SELECT *\nFROM customers\nWHERE id = :id', params: { id: '.req.query.id // "1"' } }),
+  },
   transform: {
     title: 'Transform', description: 'Reshape data with jq', color: '#f472b6', glyph: '{ }', inputs: true, output: true,
     defaults: () => ({ label: 'Transform', expr: '.' }),
@@ -49,7 +53,7 @@ export const KINDS: Record<NodeKind, KindInfo> = {
   },
 };
 
-export const PALETTE: NodeKind[] = ['trigger', 'http', 'transform', 'condition', 'static', 'secret', 'xml', 'response'];
+export const PALETTE: NodeKind[] = ['trigger', 'http', 'database', 'transform', 'condition', 'static', 'secret', 'xml', 'response'];
 
 let seq = 0;
 export function newNode(kind: NodeKind, position: { x: number; y: number }): FlowNode {
