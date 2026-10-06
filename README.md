@@ -159,4 +159,6 @@ Layout: `packages/flow-core` (schema, compiler, trace parser, shared with the UI
 - **Database nodes fail with "Vault unavailable".** Check `docker compose logs vault`. Vault unseals itself on start, and if `vault-keys` was deleted while `vault-file` was kept, remove both volumes.
 - **A recreated container is unreachable from flows for a while.** Kong caches DNS. The data plane is configured with a 5 s TTL (`KONG_DNS_VALID_TTL`), so wait a few seconds.
 - **AS2 partners can't reach us.** Set `AS2_PUBLIC_URL` (or the public URL on **Our station**) to an address the partner can reach, and open port 4080, ideally behind TLS.
-- **Reset everything:** `docker compose down -v`. This drops flows, Vault secrets and the DP certificate. The pinned certificate stays in Konnect until you remove it.
+- **Reset everything:** `./cleanup.sh`. It removes the compose stack with its volumes (flows, Vault secrets, EDI messages, DP certificate), the API-started `ipaas-db-access` container and the built images. In Konnect it deletes the control plane if `konnect-init` created it (label `app=ipaas`); otherwise it deletes only the entities tagged `ipaas`, the legacy `ipaas-db-connections` config store and the pinned DP certificate. It then checks that nothing is left and exits 1 if something is.
+  - Options: `--dry-run`, `--verify` (check only), `--keep-cp`, `--keep-images`, `--local-only` (skip Konnect), `--interop` (also the interop test containers, the `ipaas-m2` volume and build output), `-y` (no prompt).
+  - `.env`, `secrets.env` and `~/.kong/kpat` are never touched.
